@@ -8,6 +8,9 @@ import net.liftweb.mapper.DB
 import net.liftweb.mapper.DefaultConnectionIdentifier
 import net.liftweb.mapper.StandardDBVendor
 import net.liftweb.util.Props
+import code.lib.HelloRest
+import net.liftweb.mapper.MapperRules
+import net.liftweb.util.Helpers
 
 class Boot {
   def boot {
@@ -21,9 +24,13 @@ class Boot {
     LiftRules.unloadHooks.append(vendor.closeAllConnections_! _)
 
     DB.defineConnectionManager(DefaultConnectionIdentifier, vendor)
+    
+    MapperRules.columnName = (_,name) => Helpers.snakify(name)
 
     // where to search snippet
     LiftRules.addToPackages("code")
+    
+    LiftRules.statelessDispatch.append(HelloRest)
 
     // Force the request to be UTF-8
     LiftRules.early.append(_.setCharacterEncoding("UTF-8"))
