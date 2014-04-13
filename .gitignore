@@ -1,0 +1,12 @@
+/target
+/project/target
+/project/project
+/.cache
+/*.db
+/*.log
+
+.project
+.classpath
+.buildpath
+.settings
+/bin
