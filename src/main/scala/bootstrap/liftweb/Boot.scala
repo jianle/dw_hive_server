@@ -8,9 +8,9 @@ import net.liftweb.mapper.DB
 import net.liftweb.mapper.DefaultConnectionIdentifier
 import net.liftweb.mapper.StandardDBVendor
 import net.liftweb.util.Props
-import code.lib.HelloRest
 import net.liftweb.mapper.MapperRules
 import net.liftweb.util.Helpers
+import code.lib.TaskRest
 
 class Boot {
   def boot {
@@ -30,7 +30,7 @@ class Boot {
     // where to search snippet
     LiftRules.addToPackages("code")
     
-    LiftRules.statelessDispatch.append(HelloRest)
+    LiftRules.statelessDispatch.append(TaskRest)
 
     // Force the request to be UTF-8
     LiftRules.early.append(_.setCharacterEncoding("UTF-8"))
