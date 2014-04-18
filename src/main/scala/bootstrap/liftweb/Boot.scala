@@ -1,16 +1,17 @@
 package bootstrap.liftweb
 
+import code.lib.TaskRest
+import code.lib.TaskService
 import net.liftweb.db.DB1.db1ToDb
 import net.liftweb.http.LiftRules
 import net.liftweb.http.LiftRulesMocker.toLiftRules
 import net.liftweb.http.S
 import net.liftweb.mapper.DB
 import net.liftweb.mapper.DefaultConnectionIdentifier
-import net.liftweb.mapper.StandardDBVendor
-import net.liftweb.util.Props
 import net.liftweb.mapper.MapperRules
+import net.liftweb.mapper.StandardDBVendor
 import net.liftweb.util.Helpers
-import code.lib.TaskRest
+import net.liftweb.util.Props
 
 class Boot {
   def boot {
@@ -24,12 +25,12 @@ class Boot {
     LiftRules.unloadHooks.append(vendor.closeAllConnections_! _)
 
     DB.defineConnectionManager(DefaultConnectionIdentifier, vendor)
-    
+
     MapperRules.columnName = (_,name) => Helpers.snakify(name)
 
     // where to search snippet
     LiftRules.addToPackages("code")
-    
+
     LiftRules.statelessDispatch.append(TaskRest)
 
     // Force the request to be UTF-8
@@ -37,5 +38,10 @@ class Boot {
 
     // Make a transaction span the whole HTTP request
     S.addAround(DB.buildLoanWrapper)
+
+    // Start daemon
+    TaskService.start()
+    LiftRules.unloadHooks.append(() => TaskService ! 'Exit)
+
   }
 }
