@@ -1,28 +1,25 @@
 package code
 package lib
 
-import scala.actors.Actor
-import scala.actors.SchedulerAdapter
-import scala.actors.threadpool.Executors
+import akka.event.Logging
+import akka.actor.Actor
+
 
 class TaskActor extends Actor {
-
-  val pool = Executors.newFixedThreadPool(20)
-
-  override def scheduler = new SchedulerAdapter {
-    def execute(block: => Unit) =
-      pool.execute(new Runnable {
-        def run() { block }
-      })
+  
+  val log = Logging(context.system, this)
+  
+  override def preStart = {
+    log.info("taskActor started")
+    // TODO read unfinished tasks
   }
-
-  def act() {
-    loop {
-      react {
-        case ts: Long => println(ts)
-        case 'Exit => exit()
-      }
-    }
+  
+  override def postStop = {
+    log.info("taskActor stopped")
+  }
+  
+  def receive = {
+    case ts: Long => log.info(ts.toString)
   }
 
 }

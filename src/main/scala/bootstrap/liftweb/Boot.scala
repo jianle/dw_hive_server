@@ -1,7 +1,6 @@
 package bootstrap.liftweb
 
 import code.lib.TaskRest
-import code.lib.TaskService
 import net.liftweb.db.DB1.db1ToDb
 import net.liftweb.http.LiftRules
 import net.liftweb.http.LiftRulesMocker.toLiftRules
@@ -12,6 +11,8 @@ import net.liftweb.mapper.MapperRules
 import net.liftweb.mapper.StandardDBVendor
 import net.liftweb.util.Helpers
 import net.liftweb.util.Props
+import code.lib.TaskActor
+import akka.actor.ActorSystem
 
 class Boot {
   def boot {
@@ -40,8 +41,9 @@ class Boot {
     S.addAround(DB.buildLoanWrapper)
 
     // Start daemon
-    TaskService.start()
-    LiftRules.unloadHooks.append(() => TaskService ! 'Exit)
+    val actorSystem = ActorSystem("hiveServer")
+    val taskActor = actorSystem.actorOf(akka.actor.Props[TaskActor], "taskActor")
+    LiftRules.unloadHooks.append(() => actorSystem.shutdown)
 
   }
 }
