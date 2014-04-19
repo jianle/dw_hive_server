@@ -16,7 +16,7 @@ object DependencyFactory extends Factory {
   implicit object time extends FactoryMaker(Helpers.now)
 
   private def init() {
-    LiftRules.unloadHooks.append(() => actorSystem.shutdown)
+    LiftRules.unloadHooks.append(actorSystem.shutdown)
     List(taskActor, time)
   }
 
