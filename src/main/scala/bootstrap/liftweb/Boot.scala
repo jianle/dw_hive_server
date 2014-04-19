@@ -39,11 +39,5 @@ class Boot {
 
     // Make a transaction span the whole HTTP request
     S.addAround(DB.buildLoanWrapper)
-
-    // Start daemon
-    val actorSystem = ActorSystem("hiveServer")
-    val taskActor = actorSystem.actorOf(akka.actor.Props[TaskActor], "taskActor")
-    LiftRules.unloadHooks.append(() => actorSystem.shutdown)
-
   }
 }

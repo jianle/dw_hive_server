@@ -23,3 +23,7 @@ class TaskActor extends Actor {
   }
 
 }
+
+object TaskActor {
+  
+}
