@@ -7,8 +7,9 @@ import net.liftweb.http.S
 import net.liftweb.http.rest.RestHelper
 import net.liftweb.json.JsonAST._
 import net.liftweb.json.JsonDSL._
+import net.liftweb.common.Loggable
 
-object TaskRest extends RestHelper {
+object TaskRest extends RestHelper with Loggable {
 
   val taskActor = DependencyFactory.inject[ActorRef]
 
@@ -27,10 +28,10 @@ object TaskRest extends RestHelper {
             .status(Task.STATUS_NEW)
             .saveMe()
 
-        val taskId = task.id.get.intValue
-        taskActor.map(_ ! taskId)
+        taskActor.map(_ ! task.id.get)
+        logger.info("Submitted task id " + task.id.get)
 
-        ("status", "ok") ~ ("id", taskId)
+        ("status", "ok") ~ ("id", task.id.get)
       }
 
     }
