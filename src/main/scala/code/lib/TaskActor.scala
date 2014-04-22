@@ -97,8 +97,8 @@ class TaskActor extends Actor {
 
   }
 
-  private def removeComments(query: String): String = {
-    return "(?s)/\\*.*?\\*/".r.replaceAllIn(query, "")
+  private def removeComments(query: String) = {
+    "(?s)/\\*.*?\\*/".r.replaceAllIn(query, "")
   }
 
   private def exportHiveToMysql(taskId: Long, hiveDatabase: String, hiveTable: String,
