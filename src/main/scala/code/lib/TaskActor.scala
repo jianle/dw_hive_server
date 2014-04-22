@@ -12,7 +12,8 @@ import net.liftweb.mapper.DB
 import java.io.FileWriter
 import java.util.Calendar
 import java.text.SimpleDateFormat
-
+import java.util.Properties
+import java.io.FileInputStream
 
 
 class TaskActor extends Actor {
@@ -103,6 +104,7 @@ class TaskActor extends Actor {
   private def exportHiveToMysql(taskId: Long, hiveDatabase: String, hiveTable: String,
       mysqlDatabase: String, mysqlTable: String, partition: String) {
 
+    // create mysql table
     val tableExists = DB.runQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_scheme = ? AND table_name = ?",
         List(mysqlDatabase, mysqlTable))._2(0)(0).toInt > 0
 
@@ -141,20 +143,18 @@ class TaskActor extends Actor {
     val fw = new FileWriter(hiveSqlFile)
     fw.write("SELECT * FROM ${hiveDatabase}.${hiveTable}")
     if (partition != null) {
-      val dealDate = getDealDate
-      fw.write(" WHERE ${partition} = '${dealDate}'")
+      fw.write(" WHERE ${partition} = '${getDealDate}'")
     }
     fw.close
 
     runCmd(Seq("/home/hadoop/dwetl/exportHiveTableETLCustom.sh", hiveSqlFile, hiveDataFile))
 
     // rsync
-    runCmd(Seq("rsync", "-vW", hiveDataFile, s"10.20.8.31::dw_tmp_file/${dataFileName}"))
+    runCmd(Seq("rsync", "-vW", hiveDataFile, s"${getMysqlIp}::dw_tmp_file/${dataFileName}"))
 
     // load into mysql
     if (partition != null) {
-      val dealDate = getDealDate
-      runUpdate("DELETE FROM ${mysqlDatabase}.${mysqlTable} WHERE ${partition} = '${dealDate}'")
+      runUpdate("DELETE FROM ${mysqlDatabase}.${mysqlTable} WHERE ${partition} = '${getDealDate}'")
     } else {
       runUpdate("TRUNCATE TABLE ${mysqlDatabase}.${mysqlTable}")
     }
@@ -187,6 +187,14 @@ class TaskActor extends Actor {
   private def runUpdate(sql: String): Int = {
     logger.info(sql)
     return DB.runUpdate(sql, Nil)
+  }
+
+  private def getMysqlIp(): String = {
+    val userHome = System.getProperty("user.home")
+    val input = new FileInputStream(s"${userHome}/dwetl/server_config/offline_dw-master.properties")
+    val props = new Properties
+    props.load(input)
+    props.getProperty("remote.ip")
   }
 
 }
