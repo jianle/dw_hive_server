@@ -10,16 +10,21 @@ import net.liftweb.mapper.ByList
 import scala.collection.mutable.MutableList
 import net.liftweb.mapper.DB
 import java.io.FileWriter
+import java.io.File
 import java.util.Calendar
 import java.text.SimpleDateFormat
 import java.util.Properties
 import java.io.FileInputStream
 
 
+object TaskActor {
+  val HIVE_FOLDER = "/data/dwlogs/tmplog/hs"
+  val MYSQL_FOLDER = "/tmp/dw_tmp_file"
+}
+
 class TaskActor extends Actor {
 
-  val HIVE_FOLDER = "/data/dwlogs/tmplog"
-  val MYSQL_FOLDER = "/tmp/dw_tmp_file"
+  import TaskActor._
 
   val logger = Logging(context.system, this)
 
@@ -46,7 +51,7 @@ class TaskActor extends Actor {
   }
 
   private def process(taskId: Long) {
-    logger.info("Processing task id: " + taskId)
+    logger.info(s"Processing task id: ${taskId}")
 
     val task = Task.find(taskId) openOr null
 
@@ -57,19 +62,25 @@ class TaskActor extends Actor {
 
     task.status(Task.STATUS_RUNNING).save
 
+    val errorFile = new File(s"${HIVE_FOLDER}/hive_server_task_${taskId}.err")
     try {
-      execute(task.id.get, task.query.get)
+      execute(task.id.get, errorFile, task.query.get)
+      task.status(Task.STATUS_OK).save
     } catch {
       case e: Exception =>
         logger.error(e, "Fail to execute query.")
         task.status(Task.STATUS_ERROR).save
-        return
-    }
 
-    task.status(Task.STATUS_OK).save
+        val fw = new FileWriter(errorFile, true)
+        fw.write(e.toString)
+        fw.close
+
+    } finally {
+      logger.info(s"Task id ${taskId} finished.")
+    }
   }
 
-  private def execute(taskId: Long, query: String) {
+  private def execute(taskId: Long, errorFile: File, query: String) {
 
     val ptrnExport = "(?i)EXPORT\\s+HIVE\\s+(\\w+)\\.(\\w+)\\s+TO\\s+MYSQL\\s+(\\w+)\\.(\\w+)(\\s+PARTITION\\s+(\\w+))?".r
     val buffer = MutableList[String]()
@@ -80,10 +91,10 @@ class TaskActor extends Actor {
 
         case Some(matcher) =>
           if (buffer.nonEmpty) {
-            executeHive(taskId, buffer.mkString(";\n"))
+            executeHive(taskId, errorFile, buffer.mkString(";"))
             buffer.clear
           }
-          exportHiveToMysql(taskId, matcher.group(1), matcher.group(2),
+          exportHiveToMysql(taskId, errorFile, matcher.group(1), matcher.group(2),
               matcher.group(3), matcher.group(4), matcher.group(6))
 
         case None => if (sql.trim.nonEmpty) buffer += sql
@@ -91,7 +102,7 @@ class TaskActor extends Actor {
     }
 
     if (buffer.nonEmpty) {
-      executeHive(taskId, buffer.mkString(";\n"))
+      executeHive(taskId, errorFile, buffer.mkString(";"))
       buffer.clear
     }
 
@@ -101,76 +112,74 @@ class TaskActor extends Actor {
     "(?s)/\\*.*?\\*/".r.replaceAllIn(query, "")
   }
 
-  private def exportHiveToMysql(taskId: Long, hiveDatabase: String, hiveTable: String,
+  private def exportHiveToMysql(taskId: Long, errorFile: File, hiveDatabase: String, hiveTable: String,
       mysqlDatabase: String, mysqlTable: String, partition: String) {
 
     // create mysql table
-    val tableExists = DB.runQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_scheme = ? AND table_name = ?",
+    val tableExists = DB.runQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?",
         List(mysqlDatabase, mysqlTable))._2(0)(0).toInt > 0
 
     if (!tableExists) {
 
       logger.info("Generating CREATE TABLE statement.")
       val createSql = new StringBuilder
-      createSql ++= s"CREATE TABLE IF NOT EXISTS ${mysqlDatabase}.${mysqlTable} (\n"
+      createSql ++= s"CREATE TABLE ${mysqlDatabase}.${mysqlTable} (\n"
 
-      val hiveColumns = Seq("hive", "-e", s"USE ${hiveDatabase}; DESC ${hiveTable};").!!
-      createSql ++= hiveColumns.split("\\n").map((line) => {
+      val hiveColumns = runCmd(Seq("hive", "-e", s"USE ${hiveDatabase}; DESC ${hiveTable};"), errorFile, true)
+      createSql ++= hiveColumns.split("\\n").takeWhile(_.trim.nonEmpty).map((line) => {
         val columnInfo = line.trim.split("\\s+")
-        if (columnInfo.length > 1) {
-          val columnType = columnInfo(1).toLowerCase match {
-            case s if s.contains("bigint") => "BIGINT"
-            case s if s.contains("int") => "INT"
-            case s if s.contains("float") => "FLOAT"
-            case s if s.contains("double") => "DOUBLE"
-            case _ => "VARCHAR(255)"
-          }
-          s"  ${columnInfo(0)} ${columnType}"
-        } else ""
-      }).filter(!_.isEmpty).mkString(",\n")
+        val columnType = columnInfo(1).toLowerCase match {
+          case s if s.contains("bigint") => "BIGINT"
+          case s if s.contains("int") => "INT"
+          case s if s.contains("float") => "FLOAT"
+          case s if s.contains("double") => "DOUBLE"
+          case _ => "VARCHAR(255)"
+        }
+        s"  ${columnInfo(0)} ${columnType}"
+      }).mkString(",\n")
 
       createSql ++= "\n)"
 
-      runUpdate(createSql.toString)
+      executeMysql(createSql.toString)
     }
 
     // extract from hive
     val hiveSqlFile = s"${HIVE_FOLDER}/hive_server_task_${taskId}.sql"
-    val dataFileName = "hive_server_task_${taskId}.txt"
+    val dataFileName = s"hive_server_task_${taskId}.txt"
     val hiveDataFile = s"${HIVE_FOLDER}/${dataFileName}"
     val mysqlDataFile = s"${MYSQL_FOLDER}/${dataFileName}"
 
     val fw = new FileWriter(hiveSqlFile)
-    fw.write("SELECT * FROM ${hiveDatabase}.${hiveTable}")
+    fw.write(s"SELECT * FROM ${hiveDatabase}.${hiveTable}")
     if (partition != null) {
-      fw.write(" WHERE ${partition} = '${getDealDate}'")
+      fw.write(s" WHERE ${partition} = '${getDealDate}'")
     }
     fw.close
 
-    runCmd(Seq("/home/hadoop/dwetl/exportHiveTableETLCustom.sh", hiveSqlFile, hiveDataFile))
+    runCmd(Seq("/home/hadoop/dwetl/exportHiveTableETLCustom.sh", hiveSqlFile, hiveDataFile), errorFile)
 
     // rsync
-    runCmd(Seq("rsync", "-vW", hiveDataFile, s"${getMysqlIp}::dw_tmp_file/${dataFileName}"))
+    runCmd(Seq("rsync", "-vW", hiveDataFile, s"${getMysqlIp}::dw_tmp_file/${dataFileName}"), errorFile)
 
     // load into mysql
     if (partition != null) {
-      runUpdate("DELETE FROM ${mysqlDatabase}.${mysqlTable} WHERE ${partition} = '${getDealDate}'")
+      executeMysql(s"DELETE FROM ${mysqlDatabase}.${mysqlTable} WHERE ${partition} = '${getDealDate}'")
     } else {
-      runUpdate("TRUNCATE TABLE ${mysqlDatabase}.${mysqlTable}")
+      executeMysql(s"TRUNCATE TABLE ${mysqlDatabase}.${mysqlTable}")
     }
-    runUpdate("LOAD DATA INFILE '${mysqlDataFile}' INTO TABLE ${mysqlDatabase}.${mysqlTable}")
+    executeMysql(s"LOAD DATA INFILE '${mysqlDataFile}' INTO TABLE ${mysqlDatabase}.${mysqlTable}")
 
   }
 
-  private def executeHive(taskId: Long, sql: String) {
+  private def executeHive(taskId: Long, errorFile: File, sql: String) {
     val hiveSqlFile = s"${HIVE_FOLDER}/hive_server_task_${taskId}.sql"
 
     val fw = new FileWriter(hiveSqlFile)
     fw.write(sql)
     fw.close
 
-    logger.info(sql)
-    Seq("hive", "-f", hiveSqlFile).!
+    logger.info(s"Hive - ${sql}")
+    runCmd(Seq("hive", "-f", hiveSqlFile), errorFile)
   }
 
   private def getDealDate = {
@@ -179,14 +188,39 @@ class TaskActor extends Actor {
     new SimpleDateFormat("yyyy-MM-dd").format(cal.getTime)
   }
 
-  private def runCmd(cmd: Seq[String]): Int = {
+  private def runCmd(cmd: Seq[String], errorFile: File, output: Boolean = false): String = {
     logger.info(cmd.mkString(" "))
-    return cmd.!
+
+    val fw = new FileWriter(errorFile, true)
+    val errLogger = (line: String) => {
+      fw.write(line)
+      fw.write('\n')
+    }
+
+    val sb = new StringBuilder
+    val processLogger = if (output) {
+      ProcessLogger((line) => {
+        sb ++= line
+        sb += '\n'
+      }, errLogger)
+    } else {
+      ProcessLogger((line) => (), errLogger)
+    }
+
+    val returnValue = cmd ! processLogger
+
+    fw.close
+
+    if (returnValue != 0) {
+      throw new Exception("Command return non-zero value.")
+    }
+
+    sb.toString
   }
 
-  private def runUpdate(sql: String): Int = {
-    logger.info(sql)
-    return DB.runUpdate(sql, Nil)
+  private def executeMysql(sql: String) {
+    logger.info(s"MySQL - ${sql}")
+    DB.runUpdate(sql, Nil)
   }
 
   private def getMysqlIp(): String = {
