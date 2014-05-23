@@ -30,15 +30,6 @@ class TaskActor extends Actor {
 
   override def preStart = {
     logger.info("taskActor started")
-
-    // restore unfinished tasks
-    val taskList = Task.findAll(
-        ByList(Task.status, List(Task.STATUS_NEW, Task.STATUS_RUNNING)))
-
-    taskList.map((task) => {
-      self ! task.id.get
-      logger.info("Restored task id " + task.id.get)
-    })
   }
 
   override def postStop = {

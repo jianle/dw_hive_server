@@ -2,17 +2,32 @@ package code
 package lib
 
 import scala.io.Source
-
 import akka.actor.ActorRef
 import akka.actor.actorRef2Scala
 import code.model.Task
 import net.liftweb.common.Loggable
 import net.liftweb.http.rest.RestHelper
 import net.liftweb.json.JsonDSL._
+import net.liftweb.mapper.ByList
 
 object TaskRest extends RestHelper with Loggable {
 
   val taskActor = DependencyFactory.inject[ActorRef]
+
+  private def init() {
+
+    // restore unfinished tasks
+    val taskList = Task.findAll(
+        ByList(Task.status, List(Task.STATUS_NEW, Task.STATUS_RUNNING)))
+
+    taskList.map(task => {
+      taskActor.map(_ ! task.id.get)
+      logger.info("Restored task id " + task.id.get)
+    })
+
+  }
+
+  init()
 
   serve("api" / "task" prefix {
 
