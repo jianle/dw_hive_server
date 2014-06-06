@@ -15,11 +15,22 @@ import java.util.Calendar
 import java.text.SimpleDateFormat
 import java.util.Properties
 import java.io.FileInputStream
+import scala.io.Source
 
 
 object TaskActor {
+
   val HIVE_FOLDER = "/data/dwlogs/tmplog/hs"
   val MYSQL_FOLDER = "/tmp/dw_tmp_file"
+
+  def outputFile(taskId: Long) = {
+    s"${HIVE_FOLDER}/hive_server_task_${taskId}.out"
+  }
+
+  def errorFile(taskId: Long) = {
+    s"${HIVE_FOLDER}/hive_server_task_${taskId}.err"
+  }
+
 }
 
 class TaskActor extends Actor {
@@ -53,16 +64,15 @@ class TaskActor extends Actor {
 
     task.status(Task.STATUS_RUNNING).save
 
-    val errorFile = new File(s"${HIVE_FOLDER}/hive_server_task_${taskId}.err")
     try {
-      execute(task.id.get, errorFile, task.query.get)
+      execute(task.id.get, task.query.get)
       task.status(Task.STATUS_OK).save
     } catch {
       case e: Exception =>
         logger.error(e, "Fail to execute query.")
         task.status(Task.STATUS_ERROR).save
 
-        val fw = new FileWriter(errorFile, true)
+        val fw = new FileWriter(errorFile(task.id.get), true)
         fw.write(e.toString)
         fw.close
 
@@ -71,7 +81,7 @@ class TaskActor extends Actor {
     }
   }
 
-  private def execute(taskId: Long, errorFile: File, query: String) {
+  private def execute(taskId: Long, query: String) {
 
     val ptrnExport = "(?i)EXPORT\\s+HIVE\\s+(\\w+)\\.(\\w+)\\s+TO\\s+MYSQL\\s+(\\w+)\\.(\\w+)(\\s+PARTITION\\s+(\\w+))?".r
     val buffer = MutableList[String]()
@@ -82,18 +92,22 @@ class TaskActor extends Actor {
 
         case Some(matcher) =>
           if (buffer.nonEmpty) {
-            executeHive(taskId, errorFile, buffer.mkString(";"))
+            executeHive(taskId, buffer.mkString(";"))
             buffer.clear
           }
-          exportHiveToMysql(taskId, errorFile, matcher.group(1), matcher.group(2),
-              matcher.group(3), matcher.group(4), matcher.group(6))
+          exportHiveToMysql(taskId = taskId,
+                            hiveDatabase = matcher.group(1),
+                            hiveTable = matcher.group(2),
+                            mysqlDatabase = matcher.group(3),
+                            mysqlTable = matcher.group(4),
+                            partition = matcher.group(6))
 
         case None => if (sql.trim.nonEmpty) buffer += sql
       }
     }
 
     if (buffer.nonEmpty) {
-      executeHive(taskId, errorFile, buffer.mkString(";"))
+      executeHive(taskId, buffer.mkString(";"))
       buffer.clear
     }
 
@@ -103,7 +117,7 @@ class TaskActor extends Actor {
     "(?s)/\\*.*?\\*/".r.replaceAllIn(query, "")
   }
 
-  private def exportHiveToMysql(taskId: Long, errorFile: File, hiveDatabase: String, hiveTable: String,
+  private def exportHiveToMysql(taskId: Long, hiveDatabase: String, hiveTable: String,
       mysqlDatabase: String, mysqlTable: String, partition: String) {
 
     // create mysql table
@@ -116,8 +130,9 @@ class TaskActor extends Actor {
       val createSql = new StringBuilder
       createSql ++= s"CREATE TABLE ${mysqlDatabase}.${mysqlTable} (\n"
 
-      val hiveColumns = runCmd(Seq("hive", "-e", s"USE ${hiveDatabase}; DESC ${hiveTable};"), errorFile, true)
-      createSql ++= hiveColumns.split("\\n").takeWhile(_.trim.nonEmpty).map((line) => {
+      runCmd(Seq("hive", "-e", s"USE ${hiveDatabase}; DESC ${hiveTable};"), outputFile(taskId), errorFile(taskId))
+
+      createSql ++= Source.fromFile(outputFile(taskId)).getLines.takeWhile(_.trim.nonEmpty).map((line) => {
         val columnInfo = line.trim.split("\\s+")
         val columnType = columnInfo(1).toLowerCase match {
           case s if s.contains("bigint") => "BIGINT"
@@ -147,10 +162,10 @@ class TaskActor extends Actor {
     }
     fw.close
 
-    runCmd(Seq("/home/hadoop/dwetl/exportHiveTableETLCustom.sh", hiveSqlFile, hiveDataFile), errorFile)
+    runCmd(Seq("/home/hadoop/dwetl/exportHiveTableETLCustom.sh", hiveSqlFile, hiveDataFile), outputFile(taskId), errorFile(taskId))
 
     // rsync
-    runCmd(Seq("rsync", "-vW", hiveDataFile, s"${getMysqlIp}::dw_tmp_file/${dataFileName}"), errorFile)
+    runCmd(Seq("rsync", "-vW", hiveDataFile, s"${getMysqlIp}::dw_tmp_file/${dataFileName}"), outputFile(taskId), errorFile(taskId))
 
     // load into mysql
     if (partition != null) {
@@ -162,7 +177,7 @@ class TaskActor extends Actor {
 
   }
 
-  private def executeHive(taskId: Long, errorFile: File, sql: String) {
+  private def executeHive(taskId: Long, sql: String) {
     val hiveSqlFile = s"${HIVE_FOLDER}/hive_server_task_${taskId}.sql"
 
     val fw = new FileWriter(hiveSqlFile)
@@ -170,7 +185,7 @@ class TaskActor extends Actor {
     fw.close
 
     logger.info(s"Hive - ${sql}")
-    runCmd(Seq("hive", "-f", hiveSqlFile), errorFile)
+    runCmd(Seq("hive", "-f", hiveSqlFile), outputFile(taskId), errorFile(taskId))
   }
 
   private def getDealDate = {
@@ -179,34 +194,31 @@ class TaskActor extends Actor {
     new SimpleDateFormat("yyyy-MM-dd").format(cal.getTime)
   }
 
-  private def runCmd(cmd: Seq[String], errorFile: File, output: Boolean = false): String = {
+  private def runCmd(cmd: Seq[String], outputFile: String, errorFile: String) {
     logger.info(cmd.mkString(" "))
 
-    val fw = new FileWriter(errorFile, true)
-    val errLogger = (line: String) => {
-      fw.write(line)
-      fw.write('\n')
+    val outputWriter = new FileWriter(outputFile, true)
+    val outputLogger = (line: String) => {
+      outputWriter.write(line)
+      outputWriter.write("\n")
     }
 
-    val sb = new StringBuilder
-    val processLogger = if (output) {
-      ProcessLogger((line) => {
-        sb ++= line
-        sb += '\n'
-      }, errLogger)
-    } else {
-      ProcessLogger((line) => (), errLogger)
+    val errorWriter = new FileWriter(errorFile, true)
+    val errorLogger = (line: String) => {
+      errorWriter.write(line)
+      errorWriter.write("\n")
     }
+
+    val processLogger = ProcessLogger(outputLogger, errorLogger)
 
     val returnValue = cmd ! processLogger
 
-    fw.close
+    outputWriter.close
+    errorWriter.close
 
     if (returnValue != 0) {
       throw new Exception("Command return non-zero value.")
     }
-
-    sb.toString
   }
 
   private def executeMysql(sql: String) {

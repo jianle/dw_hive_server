@@ -9,6 +9,8 @@ import net.liftweb.common.Loggable
 import net.liftweb.http.rest.RestHelper
 import net.liftweb.json.JsonDSL._
 import net.liftweb.mapper.ByList
+import java.io.{File, FileInputStream, InputStream, ByteArrayInputStream}
+import net.liftweb.http.StreamingResponse
 
 object TaskRest extends RestHelper with Loggable {
 
@@ -72,7 +74,7 @@ object TaskRest extends RestHelper with Loggable {
           var errorMessage = ""
 
           try {
-            val source = Source.fromFile(s"${TaskActor.HIVE_FOLDER}/hive_server_task_${task.id.get}.err")
+            val source = Source.fromFile(TaskActor.errorFile(task.id.get))
             errorMessage = source.getLines.mkString("\n")
             source.close
           } catch {
@@ -85,6 +87,39 @@ object TaskRest extends RestHelper with Loggable {
         }
       }
 
+    }
+
+    case "output" :: taskId JsonGet _ => {
+
+      var stream: InputStream = null
+      var size: Long = 0
+      var errorMessage = ""
+
+      val task = Task.find(taskId(0).toLong) openOr null
+      if (task == null) {
+        errorMessage = "Task id not found."
+      } else {
+        val file = new File(TaskActor.outputFile(task.id.get))
+        try {
+            stream = new FileInputStream(file)
+            size = file.length
+        } catch {
+          case e: Exception => errorMessage = "Unable to get standard output."
+        }
+      }
+
+      if (!errorMessage.isEmpty) {
+        val data = ("error\n" + errorMessage).getBytes
+        stream = new ByteArrayInputStream(data)
+        size = data.length
+      }
+
+      StreamingResponse(data = stream,
+                        onEnd = () => { stream.close },
+                        size = size,
+                        headers = ("content-type" -> "text/plain") :: Nil,
+                        cookies = Nil,
+                        code = 200)
     }
 
   })
