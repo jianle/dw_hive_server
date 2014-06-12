@@ -117,7 +117,7 @@ object TaskRest extends RestHelper with Loggable {
       StreamingResponse(data = stream,
                         onEnd = () => { stream.close },
                         size = size,
-                        headers = ("content-type" -> "text/plain") :: Nil,
+                        headers = ("content-type" -> "text/plain; charset=utf-8") :: Nil,
                         cookies = Nil,
                         code = 200)
     }
