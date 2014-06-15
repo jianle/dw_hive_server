@@ -1,6 +1,6 @@
 package bootstrap.liftweb
 
-import code.lib.TaskRest
+import code.lib._
 import net.liftweb.db.DB1.db1ToDb
 import net.liftweb.http.LiftRules
 import net.liftweb.http.LiftRulesMocker.toLiftRules
@@ -33,6 +33,7 @@ class Boot {
     LiftRules.addToPackages("code")
 
     LiftRules.statelessDispatch.append(TaskRest)
+    LiftRules.statelessDispatch.append(TableRest)
 
     // Force the request to be UTF-8
     LiftRules.early.append(_.setCharacterEncoding("UTF-8"))
