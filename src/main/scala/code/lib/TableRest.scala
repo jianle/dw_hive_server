@@ -12,8 +12,8 @@ object TableRest extends RestHelper with Loggable {
 
   serve("api" / "table" prefix {
 
-    case "list" :: database JsonGet _ => {
-      val (status, stdout, stderr) = run(Seq("hive", "-e", s"USE ${database(0)}; SHOW TABLES;"))
+    case "list" :: database :: Nil JsonGet _ => {
+      val (status, stdout, stderr) = run(Seq("hive", "-e", s"USE ${database}; SHOW TABLES;"))
 
       val result = if (status == 0) {
         stdout.split("\n").toList
@@ -24,33 +24,65 @@ object TableRest extends RestHelper with Loggable {
       result: JValue
     }
 
-    case "desc" :: database :: table JsonGet _ => {
+    case "desc" :: database :: table :: Nil JsonGet _ => {
 
       import scala.concurrent._
       import scala.concurrent.duration._
       import ExecutionContext.Implicits._
 
-      val columnsFuture = future {
-        val (status, stdout, stderr) = run(Seq("hive", "-e", s"USE ${database}; DESC FORMATTED ${table(0)}"))
-        if (status == 0) stdout else stderr
+      val hiveFuture = future {
+        run(Seq("hive", "-e", s"USE ${database}; DESC FORMATTED ${table}; SET hive.cli.print.header = true; SELECT * FROM ${table} LIMIT 100"))
       }
 
       val sizeFuture = future {
-        val (status, stdout, stderr) = run(Seq("hadoop", "fs", "-du", s"/user/hive/warehouse/${database}.db/${table(0)}"))
-        if (status == 0) stdout else stderr
+        run(Seq("hadoop", "fs", "-du", s"/user/hive/warehouse/${database}.db/${table}"))
       }
 
-      val sampleFuture = future {
-        val (status, stdout, stderr) = run(Seq("hive", "-e", s"SELECT * FROM ${database}.${table(0)} LIMIT 100"))
-        if (status == 0) stdout else stderr
-      }
+      val hiveResult = Await.result(hiveFuture, 30 seconds)
+      val sizeResult = Await.result(sizeFuture, 30 seconds)
 
-      val result = Await.result(columnsFuture, 30 seconds) ::
-          Await.result(sizeFuture, 30 seconds) ::
-          Await.result(sampleFuture, 30 seconds) ::
-          Nil
+      val columns = if (hiveResult._1 == 0) {
+        val lines = hiveResult._2.split("\n").iterator.map(_.trim)
 
-      result: JValue
+        val columnPattern = "([^\\s]+)\\s+([^\\s]+)\\s+(.*)".r
+        val fieldColumns = lines.drop(2).takeWhile(_.nonEmpty).map(line => {
+          columnPattern.findPrefixMatchOf(line) match {
+            case Some(m) => ("name" -> m.group(1)) ~ ("type" -> m.group(2)) ~ ("comment" -> m.group(3))
+            case None => JObject(Nil)
+          }
+        }).filter(_.obj.nonEmpty).toList
+
+        val partitionColumns = if (lines.next == "# Partition Information") {
+          lines.drop(2).takeWhile(_.nonEmpty).map(line => {
+            columnPattern.findPrefixMatchOf(line) match {
+              case Some(m) => ("name" -> m.group(1)) ~ ("type" -> m.group(2)) ~ ("comment" -> m.group(3)) ~ ("partition" -> true)
+              case None => JObject(Nil)
+            }
+          }).filter(_.obj.nonEmpty).toList
+        } else Nil
+
+        fieldColumns ::: partitionColumns
+      } else Nil
+
+      val rows = if (columns.nonEmpty) {
+        val columnRow = columns.map(column => (column \ "name").extract[String]).mkString("\t")
+        val lines = hiveResult._2.split("\n").iterator.map(_.trim)
+        lines.dropWhile(_ != columnRow).drop(1).map(line => {
+          line.split("\t").take(columns.length).padTo(columns.length, "").toList
+        }).toList
+      } else Nil
+
+      val size = if (sizeResult._1 == 0) {
+        val lines = sizeResult._2.split("\n")
+        if (lines.length > 1) {
+          "[0-9]+".r.findPrefixOf(lines(1)) match {
+            case Some(s) => s.toLong
+            case None => 0
+          }
+        } else 0
+      } else 0
+
+      ("columns" -> columns) ~ ("rows" -> rows) ~ ("size" -> size)
     }
 
   })
