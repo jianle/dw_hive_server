@@ -130,10 +130,32 @@ object TaskRest extends RestHelper with Loggable {
       Task.find(taskId.toLong) match {
 
         case Full(task) =>
+
           val taskStatus = task.status.get
           if (taskStatus == Task.STATUS_NEW || taskStatus == Task.STATUS_RUNNING) {
             task.status(Task.STATUS_INTERRUPTED).save
+
+            import dispatch._
+            import dispatch.Defaults._
+            import scala.sys.process._
+
+            val res = Http(url("http://10.20.8.71:50030/jobtracker.jsp") OK as.String).map(result => {
+              val ptrn = ">(job_[0-9]{12}_[0-9]+)</a>.*?<td id=\"name_[0-9]+\">\\[([0-9]+)\\]".r
+              result.split("\n").map(_.trim)
+                  .dropWhile(!_.contains("<h2 id=\"running_jobs\">Running Jobs</h2>"))
+                  .takeWhile(!_.contains("<h2 id=\"completed_jobs\">Completed Jobs</h2>"))
+                  .map(ptrn.findFirstMatchIn(_))
+                  .filter(_.nonEmpty).map(_.get).headOption match {
+                    case Some(m) if m.group(2).toLong == task.id.get =>
+                      logger.info("Kill hadoop job: " + m.group(1))
+                      Seq("hadoop", "job", "-kill", m.group(1)) !
+                    case _ => 0
+                  }
+            })
+
+            res()
           }
+
           ("status" -> "ok") ~ Nil
 
         case Empty => ("status" -> "error") ~ ("msg" -> "Task id not found.")

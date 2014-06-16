@@ -29,7 +29,8 @@ libraryDependencies ++= {
     "ch.qos.logback"    % "logback-classic"     % "1.0.6",
     "org.specs2"        %% "specs2"             % "1.14"             % "test",
     "mysql" % "mysql-connector-java" % "5.1.26",
-    "com.typesafe.akka" %% "akka-actor" % "2.3.2"
+    "com.typesafe.akka" %% "akka-actor" % "2.3.2",
+    "net.databinder.dispatch" %% "dispatch-core" % "0.11.1"
   )
 }
 

@@ -6,9 +6,8 @@ import akka.actor.Actor
 import code.model.Task
 import net.liftweb.common.Full
 import scala.sys.process._
-import net.liftweb.mapper.ByList
+import net.liftweb.mapper._
 import scala.collection.mutable.MutableList
-import net.liftweb.mapper.DB
 import java.io.FileWriter
 import java.io.File
 import java.util.Calendar
@@ -180,9 +179,17 @@ class TaskActor extends Actor {
   }
 
   private def executeHive(taskId: Long, sql: String) {
+
+    val taskStatus = Task.findAllFields(Seq(Task.status), By(Task.id, taskId)).head.status.get
+    if (taskStatus == Task.STATUS_INTERRUPTED) {
+      throw new Exception("Task is interrupted.")
+    }
+
+    val sqlBrief = sql.replace("\n", " ").replace(";", "\\;")
     val hiveSqlFile = s"${HIVE_FOLDER}/hive_server_task_${taskId}.sql"
 
     val fw = new FileWriter(hiveSqlFile)
+    fw.write(s"SET mapred.job.name = [$taskId] $sqlBrief;\n")
     fw.write(sql)
     fw.close
 
