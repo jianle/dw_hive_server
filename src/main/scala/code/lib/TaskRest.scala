@@ -5,9 +5,10 @@ import scala.io.Source
 import akka.actor.ActorRef
 import akka.actor.actorRef2Scala
 import code.model.Task
-import net.liftweb.common.Loggable
+import net.liftweb.common.{Loggable, Full, Empty}
 import net.liftweb.http.rest.RestHelper
 import net.liftweb.json.JsonDSL._
+import net.liftweb.json.JsonAST._
 import net.liftweb.mapper.ByList
 import java.io.{File, FileInputStream, InputStream, ByteArrayInputStream}
 import net.liftweb.http.StreamingResponse
@@ -67,6 +68,8 @@ object TaskRest extends RestHelper with Loggable {
           case Task.STATUS_RUNNING => "running"
           case Task.STATUS_OK => "ok"
           case Task.STATUS_ERROR => "error"
+          case Task.STATUS_INTERRUPTED => "interrupted"
+          case _ => "unknown"
         }
 
         if (taskStatus.equals("error")) {
@@ -120,6 +123,22 @@ object TaskRest extends RestHelper with Loggable {
                         headers = ("content-type" -> "text/plain; charset=utf-8") :: Nil,
                         cookies = Nil,
                         code = 200)
+    }
+
+    case "cancel" :: taskId :: Nil JsonGet _ => {
+
+      Task.find(taskId.toLong) match {
+
+        case Full(task) =>
+          val taskStatus = task.status.get
+          if (taskStatus == Task.STATUS_NEW || taskStatus == Task.STATUS_RUNNING) {
+            task.status(Task.STATUS_INTERRUPTED).save
+          }
+          ("status" -> "ok") ~ Nil
+
+        case Empty => ("status" -> "error") ~ ("msg" -> "Task id not found.")
+      }
+
     }
 
   })
