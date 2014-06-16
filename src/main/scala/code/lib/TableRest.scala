@@ -35,7 +35,7 @@ object TableRest extends RestHelper with Loggable {
       }
 
       val sizeFuture = future {
-        run(Seq("hadoop", "fs", "-du", s"/user/hive/warehouse/${database}.db/${table}"))
+        run(Seq("hadoop", "fs", "-du", "-s", s"/user/hive/warehouse/${database}.db/${table}"))
       }
 
       val hiveResult = Await.result(hiveFuture, 30 seconds)
@@ -73,13 +73,20 @@ object TableRest extends RestHelper with Loggable {
       } else Nil
 
       val size = if (sizeResult._1 == 0) {
+
         val lines = sizeResult._2.split("\n")
-        if (lines.length > 1) {
-          "[0-9]+".r.findPrefixOf(lines(1)) match {
-            case Some(s) => s.toLong
-            case None => 0
+        val ptrn = "[0-9]+".r
+
+        lines.map(line => {
+          ptrn.findPrefixOf(line) match {
+            case Some(s) => Some(s.toLong)
+            case None => None
           }
-        } else 0
+        }).filter(_.nonEmpty).headOption match {
+          case Some(o) => o.getOrElse(0L)
+          case None => 0
+        }
+
       } else 0
 
       ("columns" -> columns) ~ ("rows" -> rows) ~ ("size" -> size)
