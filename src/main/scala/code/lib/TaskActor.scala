@@ -195,25 +195,14 @@ class TaskActor extends Actor {
   }
 
   private def runCmd(cmd: Seq[String], outputFile: String, errorFile: String) {
+
     logger.info(cmd.mkString(" "))
 
-    val outputWriter = new FileWriter(outputFile, true)
-    val outputLogger = (line: String) => {
-      outputWriter.write(line)
-      outputWriter.write("\n")
-    }
+    val sbError = new StringBuilder
+    val returnValue = cmd #>> new File(outputFile) ! ProcessLogger(line => (), line => sbError.append(line).append("\n"))
 
     val errorWriter = new FileWriter(errorFile, true)
-    val errorLogger = (line: String) => {
-      errorWriter.write(line)
-      errorWriter.write("\n")
-    }
-
-    val processLogger = ProcessLogger(outputLogger, errorLogger)
-
-    val returnValue = cmd ! processLogger
-
-    outputWriter.close
+    errorWriter.write(sbError.toString)
     errorWriter.close
 
     if (returnValue != 0) {
