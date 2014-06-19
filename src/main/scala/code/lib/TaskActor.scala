@@ -22,6 +22,7 @@ object TaskActor {
 
   val HIVE_FOLDER = "/data/dwlogs/tmplog/hs"
   val MYSQL_FOLDER = "/tmp/dw_tmp_file"
+  val MAX_RESULT = 1000000
 
   def outputFile(taskId: Long) = {
     s"${HIVE_FOLDER}/hive_server_task_${taskId}.out"
@@ -160,6 +161,7 @@ class TaskActor extends Actor {
     if (partition != null) {
       fw.write(s" WHERE ${partition} = '${getDealDate}'")
     }
+    fw.write(s" LIMIT $MAX_RESULT");
     fw.close
 
     runCmd(Seq("/home/hadoop/dwetl/exportHiveTableETLCustom.sh", hiveSqlFile, hiveDataFile), outputFile(taskId), errorFile(taskId))
@@ -198,15 +200,27 @@ class TaskActor extends Actor {
 
     logger.info(cmd.mkString(" "))
 
-    val sbError = new StringBuilder
-    val returnValue = cmd #>> new File(outputFile) ! ProcessLogger(line => (), line => sbError.append(line).append("\n"))
+    var outputCounter = 0
+    val outputWriter = new FileWriter(outputFile, true)
+    val outputLogger = (line: String) => {
+      if (outputCounter < MAX_RESULT) {
+        outputWriter.write(line)
+        outputWriter.write("\n")
+        outputCounter += 1
+      }
+    }
 
     val errorWriter = new FileWriter(errorFile, true)
-    errorWriter.write(sbError.toString)
-    errorWriter.close
+    val errorLogger = (line: String) => {
+      errorWriter.write(line)
+      errorWriter.write("\n")
+    }
 
-    if (returnValue != 0) {
-      throw new Exception("Command return non-zero value.")
+    try {
+      cmd !! ProcessLogger(outputLogger, errorLogger)
+    } finally {
+      outputWriter.close
+      errorWriter.close
     }
   }
 
