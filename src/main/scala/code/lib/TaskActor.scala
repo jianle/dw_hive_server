@@ -6,9 +6,8 @@ import akka.actor.Actor
 import code.model.Task
 import net.liftweb.common.Full
 import scala.sys.process._
-import net.liftweb.mapper.ByList
+import net.liftweb.mapper._
 import scala.collection.mutable.MutableList
-import net.liftweb.mapper.DB
 import java.io.FileWriter
 import java.io.File
 import java.util.Calendar
@@ -16,6 +15,10 @@ import java.text.SimpleDateFormat
 import java.util.Properties
 import java.io.FileInputStream
 import scala.io.Source
+import scala.concurrent._
+import scala.concurrent.duration._
+import ExecutionContext.Implicits.global
+import net.liftweb.util.Props
 
 
 object TaskActor {
@@ -66,7 +69,7 @@ class TaskActor extends Actor {
     task.status(Task.STATUS_RUNNING).save
 
     try {
-      execute(task.id.get, task.query.get)
+      execute(task)
       task.status(Task.STATUS_OK).save
     } catch {
       case e: Exception =>
@@ -82,21 +85,21 @@ class TaskActor extends Actor {
     }
   }
 
-  private def execute(taskId: Long, query: String) {
+  private def execute(task: Task) {
 
     val ptrnExport = "(?i)EXPORT\\s+HIVE\\s+(\\w+)\\.(\\w+)\\s+TO\\s+MYSQL\\s+(\\w+)\\.(\\w+)(\\s+PARTITION\\s+(\\w+))?".r
     val buffer = MutableList[String]()
 
-    for (sql <- removeComments(query).split(";")) {
+    for (sql <- removeComments(task.query.get).split(";")) {
 
       ptrnExport.findFirstMatchIn(sql) match {
 
         case Some(matcher) =>
           if (buffer.nonEmpty) {
-            executeHive(taskId, buffer.mkString(";"))
+            executeHive(task.id.get, buffer.mkString(";"), task.prefix.get)
             buffer.clear
           }
-          exportHiveToMysql(taskId = taskId,
+          exportHiveToMysql(taskId = task.id.get,
                             hiveDatabase = matcher.group(1),
                             hiveTable = matcher.group(2),
                             mysqlDatabase = matcher.group(3),
@@ -108,7 +111,7 @@ class TaskActor extends Actor {
     }
 
     if (buffer.nonEmpty) {
-      executeHive(taskId, buffer.mkString(";"))
+      executeHive(task.id.get, buffer.mkString(";"), task.prefix.get)
       buffer.clear
     }
 
@@ -131,7 +134,7 @@ class TaskActor extends Actor {
       val createSql = new StringBuilder
       createSql ++= s"CREATE TABLE ${mysqlDatabase}.${mysqlTable} (\n"
 
-      runCmd(Seq("hive", "-e", s"USE ${hiveDatabase}; DESC ${hiveTable};"), outputFile(taskId), errorFile(taskId))
+      runCmd(taskId, Seq("hive", "-e", s"USE ${hiveDatabase}; DESC ${hiveTable};"), outputFile(taskId), errorFile(taskId))
 
       createSql ++= Source.fromFile(outputFile(taskId)).getLines.takeWhile(_.trim.nonEmpty).map((line) => {
         val columnInfo = line.trim.split("\\s+")
@@ -164,10 +167,10 @@ class TaskActor extends Actor {
     fw.write(s" LIMIT $MAX_RESULT");
     fw.close
 
-    runCmd(Seq("/home/hadoop/dwetl/exportHiveTableETLCustom.sh", hiveSqlFile, hiveDataFile), outputFile(taskId), errorFile(taskId))
+    runCmd(taskId, Seq("/home/hadoop/dwetl/exportHiveTableETLCustom.sh", hiveSqlFile, hiveDataFile), outputFile(taskId), errorFile(taskId))
 
     // rsync
-    runCmd(Seq("rsync", "-vW", hiveDataFile, s"${getMysqlIp}::dw_tmp_file/${dataFileName}"), outputFile(taskId), errorFile(taskId))
+    runCmd(taskId, Seq("rsync", "-vW", hiveDataFile, s"${getMysqlIp}::dw_tmp_file/${dataFileName}"), outputFile(taskId), errorFile(taskId))
 
     // load into mysql
     if (partition != null) {
@@ -179,15 +182,18 @@ class TaskActor extends Actor {
 
   }
 
-  private def executeHive(taskId: Long, sql: String) {
+  private def executeHive(taskId: Long, sql: String, prefix: String = "") {
+
+    val sqlBrief = sql.replace("\n", " ").replace(";", "\\;")
     val hiveSqlFile = s"${HIVE_FOLDER}/hive_server_task_${taskId}.sql"
 
     val fw = new FileWriter(hiveSqlFile)
+    fw.write(s"SET mapred.job.name = HS$taskId $prefix $sqlBrief;\n")
     fw.write(sql)
     fw.close
 
     logger.info(s"Hive - ${sql}")
-    runCmd(Seq("hive", "-f", hiveSqlFile), outputFile(taskId), errorFile(taskId))
+    runCmd(taskId, Seq("hive", "-f", hiveSqlFile), outputFile(taskId), errorFile(taskId), true)
   }
 
   private def getDealDate = {
@@ -196,7 +202,7 @@ class TaskActor extends Actor {
     new SimpleDateFormat("yyyy-MM-dd").format(cal.getTime)
   }
 
-  private def runCmd(cmd: Seq[String], outputFile: String, errorFile: String) {
+  private def runCmd(taskId: Long, cmd: Seq[String], outputFile: String, errorFile: String, mapred: Boolean = false) {
 
     logger.info(cmd.mkString(" "))
 
@@ -216,8 +222,38 @@ class TaskActor extends Actor {
       errorWriter.write("\n")
     }
 
+    val proc = cmd.run(ProcessLogger(outputLogger, errorLogger))
+
+    val code = future {
+      proc.exitValue
+    }
+
     try {
-      cmd !! ProcessLogger(outputLogger, errorLogger)
+
+        while (!Thread.interrupted) {
+
+          // check task status
+          val taskStatus = Task.findAllFields(Seq(Task.status), By(Task.id, taskId)).head.status.get
+          if (taskStatus == Task.STATUS_INTERRUPTED) {
+            proc.destroy
+            if (mapred) {
+              cleanupMapred(taskId)
+            }
+            throw new Exception("Task is interrupted.")
+          }
+
+          // poll result
+          try {
+            if (Await.result(code, 3 seconds) != 0) {
+              throw new Exception("Command returns non-zero value.")
+            }
+            return
+          } catch {
+            case _: TimeoutException =>
+          }
+
+        }
+
     } finally {
       outputWriter.close
       errorWriter.close
@@ -235,6 +271,31 @@ class TaskActor extends Actor {
     val props = new Properties
     props.load(input)
     props.getProperty("remote.ip")
+  }
+
+  private def cleanupMapred(taskId: Long) {
+
+      import dispatch._
+
+      val jt = Props.get("hadoop.job.tracker") openOr "127.0.0.1:50030"
+      val res = Http(url(s"http://$jt/jobtracker.jsp") OK as.String).map(result => {
+
+        val lines = result.split("\n")
+            .dropWhile(!_.contains("<h2 id=\"running_jobs\">"))
+            .takeWhile(!_.contains("<hr>"))
+
+        val ptrn = ">(job_[0-9]+_[0-9]+)</a>.*?<td id=\"name_[0-9]+\">HS([0-9]+)".r
+        lines.foreach(line => {
+          ptrn.findFirstMatchIn(line) match {
+            case Some(m) if m.group(2).toLong == taskId =>
+              logger.info("Kill hadoop job: " + m.group(1))
+              Seq("hadoop", "job", "-kill", m.group(1)) !
+            case _ =>
+          }
+        })
+      })
+      res()
+
   }
 
 }

@@ -5,12 +5,14 @@ import scala.io.Source
 import akka.actor.ActorRef
 import akka.actor.actorRef2Scala
 import code.model.Task
-import net.liftweb.common.Loggable
+import net.liftweb.common.{Loggable, Full, Empty}
 import net.liftweb.http.rest.RestHelper
 import net.liftweb.json.JsonDSL._
+import net.liftweb.json.JsonAST._
 import net.liftweb.mapper.ByList
 import java.io.{File, FileInputStream, InputStream, ByteArrayInputStream}
 import net.liftweb.http.StreamingResponse
+import net.liftweb.util.Props
 
 object TaskRest extends RestHelper with Loggable {
 
@@ -35,11 +37,16 @@ object TaskRest extends RestHelper with Loggable {
 
     case "submit" :: Nil JsonPost json -> _ => {
 
-      (json \ "query").extractOpt[String] match {
+      val query = (json \ "query").extractOrElse[String]("")
+      val prefix = (json \ "prefix").extractOrElse[String]("")
 
-        case Some(query) =>
+      if (query.isEmpty) {
+        ("status", "error") ~ ("msg", "Query cannot be empty.")
+      } else {
+
           val task = Task.create
             .query(query)
+            .prefix(prefix)
             .status(Task.STATUS_NEW)
             .saveMe()
 
@@ -48,10 +55,7 @@ object TaskRest extends RestHelper with Loggable {
           logger.info("Submitted task id " + task.id.get)
 
           ("status", "ok") ~ ("id", task.id.get)
-
-        case None => ("status", "error") ~ ("msg", "Query cannot be empty.")
       }
-
     }
 
     case "status" :: taskId JsonGet _ => {
@@ -67,6 +71,8 @@ object TaskRest extends RestHelper with Loggable {
           case Task.STATUS_RUNNING => "running"
           case Task.STATUS_OK => "ok"
           case Task.STATUS_ERROR => "error"
+          case Task.STATUS_INTERRUPTED => "interrupted"
+          case _ => "unknown"
         }
 
         if (taskStatus.equals("error")) {
@@ -120,6 +126,21 @@ object TaskRest extends RestHelper with Loggable {
                         headers = ("content-type" -> "text/plain; charset=utf-8") :: Nil,
                         cookies = Nil,
                         code = 200)
+    }
+
+    case "cancel" :: taskId :: Nil JsonGet _ => {
+
+      val task = Task.find(taskId.toLong) openOr null
+      if (task == null) {
+        ("status" -> "error") ~ ("msg" -> "Task id not found.")
+      } else {
+
+        val taskStatus = task.status.get
+        if (taskStatus == Task.STATUS_NEW || taskStatus == Task.STATUS_RUNNING) {
+          task.status(Task.STATUS_INTERRUPTED).save
+        }
+        ("status" -> "ok") ~ Nil
+      }
     }
 
   })

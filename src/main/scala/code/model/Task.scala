@@ -16,10 +16,12 @@ class Task extends LongKeyedMapper[Task]
   val STATUS_RUNNING = 2
   val STATUS_OK = 3
   val STATUS_ERROR = 4
+  val STATUS_INTERRUPTED = 5
 
   def getSingleton = Task
 
   object query extends MappedText(this)
+  object prefix extends MappedString(this, 255)
   object status extends MappedInt(this)
 }
 
