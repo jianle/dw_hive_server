@@ -21,6 +21,7 @@ class Task extends LongKeyedMapper[Task]
   def getSingleton = Task
 
   object query extends MappedText(this)
+  object prefix extends MappedString(this, 255)
   object status extends MappedInt(this)
 }
 

@@ -65,7 +65,7 @@ class TaskActor extends Actor {
     task.status(Task.STATUS_RUNNING).save
 
     try {
-      execute(task.id.get, task.query.get)
+      execute(task)
       task.status(Task.STATUS_OK).save
     } catch {
       case e: Exception =>
@@ -81,21 +81,21 @@ class TaskActor extends Actor {
     }
   }
 
-  private def execute(taskId: Long, query: String) {
+  private def execute(task: Task) {
 
     val ptrnExport = "(?i)EXPORT\\s+HIVE\\s+(\\w+)\\.(\\w+)\\s+TO\\s+MYSQL\\s+(\\w+)\\.(\\w+)(\\s+PARTITION\\s+(\\w+))?".r
     val buffer = MutableList[String]()
 
-    for (sql <- removeComments(query).split(";")) {
+    for (sql <- removeComments(task.query.get).split(";")) {
 
       ptrnExport.findFirstMatchIn(sql) match {
 
         case Some(matcher) =>
           if (buffer.nonEmpty) {
-            executeHive(taskId, buffer.mkString(";"))
+            executeHive(task.id.get, buffer.mkString(";"), task.prefix.get)
             buffer.clear
           }
-          exportHiveToMysql(taskId = taskId,
+          exportHiveToMysql(taskId = task.id.get,
                             hiveDatabase = matcher.group(1),
                             hiveTable = matcher.group(2),
                             mysqlDatabase = matcher.group(3),
@@ -107,7 +107,7 @@ class TaskActor extends Actor {
     }
 
     if (buffer.nonEmpty) {
-      executeHive(taskId, buffer.mkString(";"))
+      executeHive(task.id.get, buffer.mkString(";"), task.prefix.get)
       buffer.clear
     }
 
@@ -178,7 +178,7 @@ class TaskActor extends Actor {
 
   }
 
-  private def executeHive(taskId: Long, sql: String) {
+  private def executeHive(taskId: Long, sql: String, prefix: String = "") {
 
     val taskStatus = Task.findAllFields(Seq(Task.status), By(Task.id, taskId)).head.status.get
     if (taskStatus == Task.STATUS_INTERRUPTED) {
@@ -189,7 +189,7 @@ class TaskActor extends Actor {
     val hiveSqlFile = s"${HIVE_FOLDER}/hive_server_task_${taskId}.sql"
 
     val fw = new FileWriter(hiveSqlFile)
-    fw.write(s"SET mapred.job.name = [$taskId] $sqlBrief;\n")
+    fw.write(s"SET mapred.job.name = [$taskId] $prefix $sqlBrief;\n")
     fw.write(sql)
     fw.close
 

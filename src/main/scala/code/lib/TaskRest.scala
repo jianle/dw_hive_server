@@ -37,11 +37,16 @@ object TaskRest extends RestHelper with Loggable {
 
     case "submit" :: Nil JsonPost json -> _ => {
 
-      (json \ "query").extractOpt[String] match {
+      val query = (json \ "query").extractOrElse[String]("")
+      val prefix = (json \ "prefix").extractOrElse[String]("")
 
-        case Some(query) =>
+      if (query.isEmpty) {
+        ("status", "error") ~ ("msg", "Query cannot be empty.")
+      } else {
+
           val task = Task.create
             .query(query)
+            .prefix(prefix)
             .status(Task.STATUS_NEW)
             .saveMe()
 
@@ -50,10 +55,7 @@ object TaskRest extends RestHelper with Loggable {
           logger.info("Submitted task id " + task.id.get)
 
           ("status", "ok") ~ ("id", task.id.get)
-
-        case None => ("status", "error") ~ ("msg", "Query cannot be empty.")
       }
-
     }
 
     case "status" :: taskId JsonGet _ => {
