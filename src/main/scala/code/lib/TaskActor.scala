@@ -23,7 +23,7 @@ import net.liftweb.util.Props
 
 object TaskActor {
 
-  val HIVE_FOLDER = "/data/dwlogs/tmplog/hs"
+  val HIVE_FOLDER = "/data/dwlogs/tmplog"
   val MYSQL_FOLDER = "/tmp/dw_tmp_file"
   val MAX_RESULT = 1000000
 
@@ -164,10 +164,10 @@ class TaskActor extends Actor {
     fw.write(s" LIMIT $MAX_RESULT");
     fw.close
 
-    runCmd(taskId, Seq("/home/hadoop/dwetl/exportHiveTableETLCustom.sh", hiveSqlFile, hiveDataFile), outputFile(taskId), errorFile(taskId))
+    runCmd(taskId, Seq("/home/hadoop/dwetl/exportHiveTableETLCustom.sh", hiveSqlFile, hiveDataFile))
 
     // rsync
-    runCmd(taskId, Seq("rsync", "-vW", hiveDataFile, s"${getMysqlIp}::dw_tmp_file/${dataFileName}"), outputFile(taskId), errorFile(taskId))
+    runCmd(taskId, Seq("rsync", "-vW", hiveDataFile, s"${getMysqlIp}::dw_tmp_file/${dataFileName}"))
 
     // load into mysql
     if (partition != null) {
@@ -217,7 +217,19 @@ class TaskActor extends Actor {
       executeHive(taskId, createSql.toString, "")
     }
 
-    // TODO
+    // extract from mysql
+    val dataFileName = s"hive_server_task_${taskId}.txt"
+    val hiveDataFile = s"${HIVE_FOLDER}/${dataFileName}"
+    val mysqlDataFile = s"${MYSQL_FOLDER}/${dataFileName}"
+
+    runCmd(taskId, Seq("ssh", s"dwadmin@${getMysqlIp}", "rm", "-f", mysqlDataFile))
+    DB.runQuery(s"SELECT * FROM $mysqlDatabase.$mysqlTable INTO OUTFILE '$mysqlDataFile'")
+
+    // rsync
+    runCmd(taskId, Seq("rsync", "-vW", s"${getMysqlIp}::dw_tmp_file/$mysqlDataFile", hiveDataFile))
+
+    // load into hive
+    runCmd(taskId, Seq("hive", "-e", s"LOAD DATA LOCAL INPATH '$hiveDataFile' OVERWRITE INTO TABLE $hiveDatabase.$hiveTable"))
 
   }
 
@@ -231,7 +243,7 @@ class TaskActor extends Actor {
     fw.close
 
     logger.info(s"Hive - ${sql}")
-    runCmd(taskId, Seq("hive", "-f", hiveSqlFile), outputFile(taskId), errorFile(taskId), true)
+    runCmd(taskId, Seq("hive", "-f", hiveSqlFile), true)
   }
 
   private def getDealDate = {
@@ -240,12 +252,12 @@ class TaskActor extends Actor {
     new SimpleDateFormat("yyyy-MM-dd").format(cal.getTime)
   }
 
-  private def runCmd(taskId: Long, cmd: Seq[String], outputFile: String, errorFile: String, mapred: Boolean = false) {
+  private def runCmd(taskId: Long, cmd: Seq[String], mapred: Boolean = false) {
 
     logger.info(cmd.mkString(" "))
 
     var outputCounter = 0
-    val outputWriter = new FileWriter(outputFile, true)
+    val outputWriter = new FileWriter(outputFile(taskId), true)
     val outputLogger = (line: String) => {
       if (outputCounter < MAX_RESULT) {
         outputWriter.write(line)
@@ -254,7 +266,7 @@ class TaskActor extends Actor {
       }
     }
 
-    val errorWriter = new FileWriter(errorFile, true)
+    val errorWriter = new FileWriter(errorFile(taskId), true)
     val errorLogger = (line: String) => {
       errorWriter.write(line)
       errorWriter.write("\n")
