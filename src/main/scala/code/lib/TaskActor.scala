@@ -20,6 +20,7 @@ import scala.concurrent.duration._
 import ExecutionContext.Implicits.global
 import net.liftweb.util.Props
 
+case class CommandResult(code: Int, stdout: String, stderr: String)
 
 object TaskActor {
 
@@ -127,13 +128,13 @@ class TaskActor extends Actor {
 
       val result = runCmd(Seq("hive", "-e", s"USE ${hiveDatabase}; DESC ${hiveTable};"))
 
-      if (result._1 != 0) {
+      if (result.code != 0) {
         throw new Exception("Hive table does not exist.")
       }
 
       val createSql = new StringBuilder(s"CREATE TABLE ${mysqlDatabase}.${mysqlTable} (\n")
 
-      createSql ++= result._2.split("\n").map(line => {
+      createSql ++= result.stdout.split("\n").map(line => {
         val columnInfo = line.trim.split("\\s+")
         val columnType = columnInfo(1).toLowerCase match {
           case s if s.contains("bigint") => "BIGINT"
@@ -184,7 +185,7 @@ class TaskActor extends Actor {
     // create hive table
     val tableExists = {
       val result = runCmd(Seq("hive", "-e", s"USE $hiveDatabase; SHOW TABLES LIKE '$hiveTable'"))
-      result._1 == 0 && result._2.trim == hiveTable
+      result.code == 0 && result.stdout.trim == hiveTable
     }
 
     if (!tableExists) {
@@ -319,7 +320,7 @@ class TaskActor extends Actor {
     val processLogger = ProcessLogger(line => stdout ++= line + "\n", line => stderr ++= line + "\n")
     val exitValue = cmd ! processLogger
 
-    (exitValue, stdout.toString, stderr.toString)
+    CommandResult(exitValue, stdout.toString, stderr.toString)
   }
 
   private def executeMysql(sql: String) {
