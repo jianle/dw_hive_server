@@ -378,7 +378,7 @@ class TaskActor extends Actor {
 
     // remove buffer statements
     val ptrnBuffer = "(?i)^(SET|ADD\\s+JAR|CREATE\\s+TEMPORARY\\s+FUNCTION|USE)\\s+".r
-    result.split(";").map(_.trim).filter(_.nonEmpty).filter(ptrnBuffer.findFirstIn(_).isEmpty).mkString("\\;")
+    result = result.split(";").map(_.trim).filter(_.nonEmpty).filter(ptrnBuffer.findFirstIn(_).isEmpty).mkString("\\; ")
 
     result
   }
