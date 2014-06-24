@@ -344,7 +344,7 @@ class TaskActor extends Actor {
 
       import dispatch._
 
-      val jt = Props.get("hadoop.job.tracker") openOr "127.0.0.1:50030"
+      val jt = Props.get("hadoop.jobtracker").openOrThrowException("hadoop.jobtracker not found")
       val res = Http(url(s"http://$jt/jobtracker.jsp") OK as.String).map(result => {
 
         val lines = result.split("\n")
