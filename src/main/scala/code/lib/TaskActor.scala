@@ -134,8 +134,8 @@ class TaskActor extends Actor {
 
       val createSql = new StringBuilder(s"CREATE TABLE ${mysqlDatabase}.${mysqlTable} (\n")
 
-      createSql ++= result.stdout.split("\n").map(line => {
-        val columnInfo = line.trim.split("\\s+")
+      createSql ++= result.stdout.split("\n").map(_.trim).takeWhile(_.nonEmpty).map(line => {
+        val columnInfo = line.split("\\s+")
         val columnType = columnInfo(1).toLowerCase match {
           case s if s.contains("bigint") => "BIGINT"
           case s if s.contains("int") => "INT"
@@ -224,10 +224,14 @@ class TaskActor extends Actor {
     val mysqlDataFile = s"${MYSQL_FOLDER}/${dataFileName}"
 
     runCmd(taskId, Seq("ssh", s"dwadmin@${getMysqlIp}", "rm", "-f", mysqlDataFile))
-    DB.runQuery(s"SELECT * FROM $mysqlDatabase.$mysqlTable INTO OUTFILE '$mysqlDataFile'")
+    DB.use(DefaultConnectionIdentifier) { conn =>
+      val sql = s"SELECT * FROM $mysqlDatabase.$mysqlTable LIMIT $MAX_RESULT INTO OUTFILE '$mysqlDataFile'"
+      logger.info(s"MySQL - $sql")
+      DB.exec(conn, sql) { rs => () }
+    }
 
     // rsync
-    runCmd(taskId, Seq("rsync", "-vW", s"${getMysqlIp}::dw_tmp_file/$mysqlDataFile", hiveDataFile))
+    runCmd(taskId, Seq("rsync", "-vW", s"${getMysqlIp}::dw_tmp_file/$dataFileName", hiveDataFile))
 
     // load into hive
     runCmd(taskId, Seq("hive", "-e", s"LOAD DATA LOCAL INPATH '$hiveDataFile' OVERWRITE INTO TABLE $hiveDatabase.$hiveTable"))
