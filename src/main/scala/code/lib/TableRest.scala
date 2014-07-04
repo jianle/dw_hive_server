@@ -7,8 +7,9 @@ import net.liftweb.http.rest.RestHelper
 import net.liftweb.json.JsonDSL._
 import net.liftweb.json.JsonAST._
 import scala.sys.process._
-import java.sql.DriverManager
+import java.sql.{DriverManager, Connection, ResultSet}
 
+case class Column(val name: String, val dataType: String)
 
 object TableRest extends RestHelper with Loggable {
 
@@ -96,21 +97,22 @@ object TableRest extends RestHelper with Loggable {
 
     case "desc2" :: database :: table :: Nil JsonGet _ => {
 
-      Class.forName("org.apache.hive.jdbc.HiveDriver")
+      val conn = getConnection
 
-      val hiveserver2 = Props.get("hadoop.hiveserver2").openOrThrowException("hadoop.hiveserver2 not found")
-      val connection = DriverManager.getConnection(s"jdbc:hive2://$hiveserver2", "hadoop", "")
+      try {
 
-      val stmt = connection.createStatement
-      stmt.execute("USE dw_db")
-      val rs = stmt.executeQuery("DESC dw_soj_pagename_lkp")
+        val rs = query(conn, "USE dw_stage; DESC zj_people")
+        val columns = new Iterator[String] {
+          def hasNext = rs.next
+          def next = rs.getString(1)
+        }
 
-      val columns = new Iterator[JObject] {
-        def hasNext = rs.next
-        def next = ("name" -> rs.getString(1)) ~ ("type" -> rs.getString(2)) ~ ("comment" -> rs.getString(3))
-      }.toList
+        ("columns" -> columns.toList): JValue
 
-      ("columns" -> columns): JValue
+      } finally {
+        conn.close
+      }
+
     }
 
   })
@@ -131,6 +133,33 @@ object TableRest extends RestHelper with Loggable {
     })
 
     (cmd ! processLogger, stdout.toString, stderr.toString)
+  }
+
+  private def getConnection = {
+    Class.forName("org.apache.hive.jdbc.HiveDriver")
+    val hiveserver2 = Props.get("hadoop.hiveserver2").openOrThrowException("hadoop.hiveserver2 not found")
+    DriverManager.getConnection(s"jdbc:hive2://$hiveserver2", "hadoop", "")
+  }
+
+  private def query(conn: Connection, sql: String) = {
+
+    val sqls = sql.split(";").map(_.trim).filter(_.nonEmpty)
+    if (sqls.isEmpty) {
+      throw new Exception("SQL cannot be empty.")
+    }
+
+    val stmt = conn.createStatement
+    sqls.take(sqls.length - 1).foreach(stmt.execute _)
+    stmt.executeQuery(sqls.last)
+
+  }
+
+  private def getMetaData(rs: ResultSet) = {
+    val meta = rs.getMetaData
+    val columns = for (i <- 1 to meta.getColumnCount) yield {
+      Column(meta.getColumnLabel(i), meta.getColumnTypeName(i))
+    }
+    columns.toList
   }
 
 }
