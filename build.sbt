@@ -8,7 +8,9 @@ scalaVersion := "2.10.0"
 
 resolvers ++= Seq("snapshots"     at "http://oss.sonatype.org/content/repositories/snapshots",
                   "staging"       at "http://oss.sonatype.org/content/repositories/staging",
-                  "releases"      at "http://oss.sonatype.org/content/repositories/releases"
+                  "releases"      at "http://oss.sonatype.org/content/repositories/releases",
+                  "cloudera"      at "https://repository.cloudera.com/artifactory/cloundera-repos/",
+                  "spring"        at "http://repo.springsource.org/libs-release-remote/"
                  )
 
 seq(webSettings :_*)
@@ -30,9 +32,13 @@ libraryDependencies ++= {
     "org.specs2"        %% "specs2"             % "1.14"             % "test",
     "mysql" % "mysql-connector-java" % "5.1.26",
     "com.typesafe.akka" %% "akka-actor" % "2.3.2",
-    "net.databinder.dispatch" %% "dispatch-core" % "0.11.1"
+    "net.databinder.dispatch" %% "dispatch-core" % "0.11.1",
+    "org.apache.hadoop" % "hadoop-common" % "2.0.0-cdh4.5.0",
+    "org.apache.hadoop" % "hadoop-core" % "2.0.0-mr1-cdh4.5.0",
+    "org.apache.hive" % "hive-jdbc" % "0.10.0-cdh4.5.0"
   )
 }
 
 env in Compile := Some(file(".") / "jetty-env.xml" asFile)
 
+port in container.Configuration := 8082

@@ -4,3 +4,4 @@ db.user=root
 db.password=password
 
 hadoop.jobtracker=127.0.0.1:50030
+hadoop.hiveserver2=127.0.0.1:10000

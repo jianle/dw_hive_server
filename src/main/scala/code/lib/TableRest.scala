@@ -2,10 +2,12 @@ package code
 package lib
 
 import net.liftweb.common.Loggable
+import net.liftweb.util.Props
 import net.liftweb.http.rest.RestHelper
 import net.liftweb.json.JsonDSL._
-import scala.sys.process._
 import net.liftweb.json.JsonAST._
+import scala.sys.process._
+import java.sql.DriverManager
 
 
 object TableRest extends RestHelper with Loggable {
@@ -90,6 +92,25 @@ object TableRest extends RestHelper with Loggable {
       } else 0
 
       ("columns" -> columns) ~ ("rows" -> rows) ~ ("size" -> size)
+    }
+
+    case "desc2" :: database :: table :: Nil JsonGet _ => {
+
+      Class.forName("org.apache.hive.jdbc.HiveDriver")
+
+      val hiveserver2 = Props.get("hadoop.hiveserver2").openOrThrowException("hadoop.hiveserver2 not found")
+      val connection = DriverManager.getConnection(s"jdbc:hive2://$hiveserver2", "hadoop", "")
+
+      val stmt = connection.createStatement
+      stmt.execute("USE dw_db")
+      val rs = stmt.executeQuery("DESC dw_soj_pagename_lkp")
+
+      val columns = new Iterator[JObject] {
+        def hasNext = rs.next
+        def next = ("name" -> rs.getString(1)) ~ ("type" -> rs.getString(2)) ~ ("comment" -> rs.getString(3))
+      }.toList
+
+      ("columns" -> columns): JValue
     }
 
   })
