@@ -124,7 +124,7 @@ class TaskActor extends Actor {
 
       logger.info("Generating CREATE TABLE statement.")
 
-      val result = runCmd(Seq("hive", "-e", s"USE ${hiveDatabase}; DESC ${hiveTable};"))
+      val result = CommandUtil.run(Seq("hive", "-e", s"USE ${hiveDatabase}; DESC ${hiveTable};"))
 
       if (result.code != 0) {
         throw new Exception("Hive table does not exist.")
@@ -182,7 +182,7 @@ class TaskActor extends Actor {
 
     // create hive table
     val tableExists = {
-      val result = runCmd(Seq("hive", "-e", s"USE $hiveDatabase; SHOW TABLES LIKE '$hiveTable'"))
+      val result = CommandUtil.run(Seq("hive", "-e", s"USE $hiveDatabase; SHOW TABLES LIKE '$hiveTable'"))
       result.code == 0 && result.stdout.trim == hiveTable
     }
 
@@ -311,18 +311,6 @@ class TaskActor extends Actor {
       outputWriter.close
       errorWriter.close
     }
-  }
-
-  private def runCmd(cmd: Seq[String]) = {
-
-    logger.info(cmd.mkString(" "))
-
-    val stdout = new StringBuilder
-    val stderr = new StringBuilder
-    val processLogger = ProcessLogger(line => stdout ++= line + "\n", line => stderr ++= line + "\n")
-    val exitValue = cmd ! processLogger
-
-    CommandResult(exitValue, stdout.toString, stderr.toString)
   }
 
   private def executeMysql(sql: String) {

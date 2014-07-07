@@ -6,7 +6,6 @@ import net.liftweb.util.Props
 import net.liftweb.http.rest.RestHelper
 import net.liftweb.json.JsonDSL._
 import net.liftweb.json.JsonAST._
-import scala.sys.process._
 import java.sql.{DriverManager, Connection, ResultSet}
 import scala.concurrent.{Future, Await}
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -19,21 +18,30 @@ object TableRest extends RestHelper with Loggable {
   serve("api" / "table" prefix {
 
     case "list" :: database :: Nil JsonGet _ => {
-      val result = run(Seq("hive", "-e", s"USE ${database}; SHOW TABLES;"))
 
-      val tableList = if (result.code == 0) {
-        result.stdout.split("\n").toList
-      } else {
-        Nil
+      val conn = getConnection
+
+      try {
+
+        val result = query(conn, s"USE ${database}; SHOW TABLES")
+
+        val tableList = new Iterator[String] {
+          def hasNext = result.next
+          def next = result.getString(1)
+        } toList
+
+        tableList: JValue
+
+      } finally {
+        conn.close
       }
 
-      tableList: JValue
     }
 
     case "desc" :: database :: table :: Nil JsonGet _ => {
 
       val sizeCommandFuture = Future {
-        run(Seq("hadoop", "fs", "-dus", s"/user/hive/warehouse/${database}.db/${table}"))
+        CommandUtil.run(Seq("hadoop", "fs", "-dus", s"/user/hive/warehouse/${database}.db/${table}"))
       }
 
       val sizeFuture = sizeCommandFuture map { result =>
@@ -95,24 +103,6 @@ object TableRest extends RestHelper with Loggable {
 
   })
 
-  private def run(cmd: Seq[String]) = {
-
-    logger.info(cmd.mkString(" "))
-
-    val stdout = new StringBuilder
-    val stderr = new StringBuilder
-
-    val processLogger = ProcessLogger(line => {
-      stdout ++= line
-      stdout ++= "\n"
-    }, line => {
-      stderr ++= line
-      stderr ++= "\n"
-    })
-
-    CommandResult(cmd ! processLogger, stdout.toString, stderr.toString)
-  }
-
   private def getConnection = {
     Class.forName("org.apache.hive.jdbc.HiveDriver")
     val hiveserver2 = Props.get("hadoop.hiveserver2").openOrThrowException("hadoop.hiveserver2 not found")
@@ -128,6 +118,8 @@ object TableRest extends RestHelper with Loggable {
 
     val stmt = conn.createStatement
     sqls.take(sqls.length - 1).foreach(stmt.execute _)
+
+    stmt.setFetchSize(1000)
     stmt.executeQuery(sqls.last)
 
   }
