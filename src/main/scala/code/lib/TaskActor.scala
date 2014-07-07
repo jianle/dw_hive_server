@@ -20,8 +20,6 @@ import scala.concurrent.duration._
 import ExecutionContext.Implicits.global
 import net.liftweb.util.Props
 
-case class CommandResult(code: Int, stdout: String, stderr: String)
-
 object TaskActor {
 
   val HIVE_FOLDER = "/data/dwlogs/tmplog"
