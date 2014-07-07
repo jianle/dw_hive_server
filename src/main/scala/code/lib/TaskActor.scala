@@ -19,6 +19,7 @@ import scala.concurrent._
 import scala.concurrent.duration._
 import ExecutionContext.Implicits.global
 import net.liftweb.util.Props
+import code.util.CommandUtil
 
 object TaskActor {
 

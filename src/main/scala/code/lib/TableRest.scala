@@ -10,6 +10,7 @@ import java.sql.{DriverManager, Connection, ResultSet}
 import scala.concurrent.{Future, Await}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
+import code.util.CommandUtil
 
 case class Column(val name: String, val dataType: String)
 

@@ -1,4 +1,4 @@
-package code.lib
+package code.util
 
 import org.apache.log4j.Logger
 import scala.sys.process._
