@@ -1,13 +1,6 @@
-package code
-package model
+package code.model
 
-import net.liftweb.mapper.MappedInt
-import net.liftweb.mapper.MappedString
-import net.liftweb.mapper.LongKeyedMapper
-import net.liftweb.mapper.LongKeyedMetaMapper
-import net.liftweb.mapper.IdPK
-import net.liftweb.mapper.CreatedUpdated
-import net.liftweb.mapper.MappedText
+import net.liftweb.mapper._
 
 class Task extends LongKeyedMapper[Task]
     with CreatedUpdated with IdPK {
@@ -29,4 +22,12 @@ object Task extends Task
     with LongKeyedMetaMapper[Task] {
 
   override def dbTableName = "hive_server_task"
+
+  def isInterrupted(id: Long): Boolean = {
+    Task.findAllFields(Seq(Task.status), By(Task.id, id)).headOption match {
+      case Some(task) => task.status == Task.STATUS_INTERRUPTED
+      case None => true
+    }
+  }
+
 }

@@ -13,6 +13,7 @@ import net.liftweb.mapper.ByList
 import java.io.{File, FileInputStream, InputStream, ByteArrayInputStream}
 import net.liftweb.http.StreamingResponse
 import net.liftweb.util.Props
+import code.util.HiveUtil
 
 object TaskRest extends RestHelper with Loggable {
 
@@ -80,7 +81,7 @@ object TaskRest extends RestHelper with Loggable {
           var errorMessage = ""
 
           try {
-            val source = Source.fromFile(TaskActor.errorFile(task.id.get))
+            val source = Source.fromFile(HiveUtil.errorFile(task.id.get))
             errorMessage = source.getLines.mkString("\n")
             source.close
           } catch {
@@ -105,7 +106,7 @@ object TaskRest extends RestHelper with Loggable {
       if (task == null) {
         errorMessage = "Task id not found."
       } else {
-        val file = new File(TaskActor.outputFile(task.id.get))
+        val file = new File(HiveUtil.outputFile(task.id.get))
         try {
             stream = new FileInputStream(file)
             size = file.length
