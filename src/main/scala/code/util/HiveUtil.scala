@@ -250,29 +250,39 @@ object HiveUtil extends Loggable {
     new SimpleDateFormat("yyyy-MM-dd").format(cal.getTime)
   }
 
-  private def cleanupMapred(implicit taskId: Long) {
+  private def cleanupMapred(implicit taskId: Long): Unit = {
 
-    import dispatch._
+    import org.apache.hadoop.conf._
+    import org.apache.hadoop.mapred._
 
     val jt = Props.get("hadoop.jobtracker").openOrThrowException("hadoop.jobtracker not found")
-    val res = Http(url(s"http://$jt/jobtracker.jsp") OK as.String).map(result => {
+    val conf = new Configuration
+    conf.set("mapred.job.tracker", jt)
+    val client = new JobClient(conf)
 
-      val lines = result.split("\n")
-          .dropWhile(!_.contains("<h2 id=\"running_jobs\">"))
-          .takeWhile(!_.contains("<hr>"))
+    try {
 
-      val ptrn = ">(job_[0-9]+_[0-9]+)</a>.*?<td id=\"name_[0-9]+\">HS([0-9]+)".r
-      lines.foreach(line => {
-        ptrn.findFirstMatchIn(line) match {
-          case Some(m) if m.group(2).toLong == taskId =>
-            logger.info("Kill hadoop job: " + m.group(1))
-            Seq("hadoop", "job", "-kill", m.group(1)) !
-          case _ =>
+      val ptrn = "HS([0-9]+)".r
+      for (jobStatus <- client.jobsToComplete) {
+
+        val job = client.getJob(jobStatus.getJobID)
+        val found = ptrn.findPrefixMatchOf(job.getJobName) match {
+          case Some(m) => m.group(1).toLong == taskId
+          case None => false
         }
-      })
-    })
-    res()
 
+        if (found) {
+          logger.info("Kill hadoop job: " + job.getID.toString)
+          job.killJob
+          return
+        }
+      }
+
+      logger.info(s"Job not found for task id: $taskId")
+
+    } finally {
+      client.close
+    }
   }
 
   private def abridgeSql(sql: String): String = {
@@ -320,9 +330,20 @@ object HiveUtil extends Loggable {
       }
     }
 
-    stmt.close
+    logger.info(s"Cancelling task id: $taskId")
     cleanupMapred
-    throw new Exception("Task is interrupted.")
+
+    /*
+     * Since stmt.cancel is not implemented until Hive 0.13, the only way
+     * to stop a HiveServer2 query is to kill the corresponding map-reduce job,
+     * or we'll have to wait for it to complete.
+     */
+    try {
+      logger.info(s"Waiting for cancelled task to complete, id: $taskId")
+      Await.result(resultFuture, Duration.Inf)
+    } catch {
+      case e: Exception => throw new Exception("Task is interrupted.", e)
+    }
   }
 
   private def runUntil(conn: Connection, sql: String) = {

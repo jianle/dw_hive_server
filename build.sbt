@@ -33,8 +33,7 @@ libraryDependencies ++= {
     "mysql" % "mysql-connector-java" % "5.1.26",
     "com.typesafe.akka" %% "akka-actor" % "2.3.2",
     "net.databinder.dispatch" %% "dispatch-core" % "0.11.1",
-    "org.apache.hadoop" % "hadoop-common" % "2.0.0-cdh4.5.0",
-    "org.apache.hadoop" % "hadoop-core" % "2.0.0-mr1-cdh4.5.0",
+    "org.apache.hadoop" % "hadoop-client" % "2.0.0-mr1-cdh4.5.0",
     "org.apache.hive" % "hive-jdbc" % "0.10.0-cdh4.5.0"
   )
 }
