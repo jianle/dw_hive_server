@@ -82,7 +82,7 @@ object MysqlUtil extends Loggable {
     logger.info(s"MySQL - $sql")
 
     val stmt = conn.createStatement
-    stmt.executeUpdate(sql)
+    stmt.execute(sql)
   }
 
 }
