@@ -213,9 +213,9 @@ object HiveUtil extends Loggable {
 
     try {
 
-      if (isQuery(sqlWithoutComments)) {
+      val (rs, uc) = runQuery(conn.hive, sqlWithPrefix, () => Task.isInterrupted(taskId))
 
-        val rs = runQuery(conn.hive, sqlWithPrefix, () => Task.isInterrupted(taskId))
+      if (rs != null) {
 
         val columns = getColumns(rs)
         fw.write(columns.map(_.name).mkString("\t"))
@@ -233,13 +233,10 @@ object HiveUtil extends Loggable {
           fw.write("\n")
         }
 
-      } else {
-
-        val rs = runUpdate(conn.hive, sqlWithPrefix, () => Task.isInterrupted(taskId))
+      } else if (uc != -1) {
         fw.write("affected rows\n")
-        fw.write(rs.toString)
+        fw.write(uc.toString)
         fw.write("\n")
-
       }
 
     } finally {
@@ -320,20 +317,13 @@ object HiveUtil extends Loggable {
     stmt.executeQuery(lastSql)
   }
 
-  def runQuery(conn: Connection, sql: String, isInterrupted: () => Boolean)(implicit taskId: Long): ResultSet = {
-    runStatement(conn, sql, (stmt, sql) => stmt.executeQuery(sql), isInterrupted)
-  }
-
-  def runUpdate(conn: Connection, sql: String, isInterrupted: () => Boolean)(implicit taskId: Long): Int = {
-    runStatement(conn, sql, (stmt, sql) => stmt.executeUpdate(sql), isInterrupted)
-  }
-
-  private def runStatement[T](conn: Connection, sql: String, execute: (Statement, String) => T, isInterrupted: () => Boolean)(implicit taskId: Long): T = {
+  def runQuery(conn: Connection, sql: String, isInterrupted: () => Boolean)(implicit taskId: Long): (ResultSet, Int) = {
 
     val (stmt, lastSql) = runUntil(conn, sql)
 
     val resultFuture = Future {
-      execute(stmt, lastSql)
+      stmt.execute(lastSql)
+      (stmt.getResultSet, stmt.getUpdateCount)
     }
 
     while (!isInterrupted()) {
@@ -402,11 +392,6 @@ object HiveUtil extends Loggable {
       Column(meta.getColumnLabel(i), meta.getColumnTypeName(i))
     }
     columns.toList
-  }
-
-  private def isQuery(sql: String): Boolean = {
-    val ptrn = "(?i)^SELECT\\s+".r
-    ptrn.findFirstIn(sql).nonEmpty
   }
 
 }
