@@ -116,7 +116,7 @@ object HiveUtil extends Loggable {
 
     logger.info("Creating MySQL table...")
 
-    val rs = runQuery(conn.hive, s"USE ${hiveDatabase}; DESC ${hiveTable}")
+    val rs = runQuery(conn.hive, s"USE ${hiveDatabase}; DESC ${hiveTable}")._1
     val columns = fetchResult(rs) map { row =>
       Column(row(0), row(1), row(2))
     }
@@ -171,7 +171,7 @@ object HiveUtil extends Loggable {
   private def ensureHiveTable(mysqlDatabase: String, mysqlTable: String,
       hiveDatabase: String, hiveTable: String)(implicit conn: Conn): Unit = {
 
-    val rs = runQuery(conn.hive, s"USE ${hiveDatabase}; SHOW TABLES LIKE '${hiveTable}'")
+    val rs = runQuery(conn.hive, s"USE ${hiveDatabase}; SHOW TABLES LIKE '${hiveTable}'")._1
     if (rs.next) {
       return
     }
@@ -312,9 +312,10 @@ object HiveUtil extends Loggable {
     DriverManager.getConnection(s"jdbc:hive2://$hiveserver2", "hadoop", "")
   }
 
-  def runQuery(conn: Connection, sql: String): ResultSet = {
+  def runQuery(conn: Connection, sql: String): (ResultSet, Int) = {
     val (stmt, lastSql) = runUntil(conn, sql)
-    stmt.executeQuery(lastSql)
+    stmt.execute(lastSql)
+    (stmt.getResultSet, stmt.getUpdateCount)
   }
 
   def runQuery(conn: Connection, sql: String, isInterrupted: () => Boolean)(implicit taskId: Long): (ResultSet, Int) = {
