@@ -3,4 +3,5 @@ db.url=jdbc:mysql://localhost/dw_stage?useUnicode=true&characterEncoding=UTF-8
 db.user=root
 db.password=password
 
-hadoop.jobtracker=127.0.0.1:50030
+hadoop.jobtracker=127.0.0.1:8021
+hadoop.hiveserver2=127.0.0.1:10000
