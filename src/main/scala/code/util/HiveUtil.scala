@@ -203,30 +203,43 @@ object HiveUtil extends Loggable {
     runQuery(conn.hive, createSql.toString)
   }
 
-  private def executeHive(sql: String, prefix: String)(implicit taskId: Long, conn: Conn) {
+  private def executeHive(sql: String, prefix: String)(implicit taskId: Long, conn: Conn): Unit = {
 
-    val sqlWithPrefix = s"SET mapred.job.name = HS$taskId $prefix ${abridgeSql(sql)};\n" + sql
+    val sqlWithoutComments = removeComments(sql)
+    val sqlAbridged = abridgeSql(sqlWithoutComments)
+    val sqlWithPrefix = s"SET mapred.job.name = HS$taskId $prefix ${sqlAbridged};\n" + sqlWithoutComments
 
     val fw = new FileWriter(outputFile, true)
 
     try {
 
-      val rs = runQuery(conn.hive, sqlWithPrefix, () => Task.isInterrupted(taskId))
+      if (isQuery(sqlWithoutComments)) {
 
-      val columns = getColumns(rs)
-      fw.write(columns.map(_.name).mkString("\t"))
-      fw.write("\n")
+        val rs = runQuery(conn.hive, sqlWithPrefix, () => Task.isInterrupted(taskId))
 
-      val rows = new Iterator[String] {
-        def hasNext = rs.next
-        def next = {
-          for (i <- 1 to columns.length) yield optString(rs, i, "NULL")
-        } mkString "\t"
-      }
-
-      rows.take(MAX_RESULT) foreach { line =>
-        fw.write(line)
+        val columns = getColumns(rs)
+        fw.write(columns.map(_.name).mkString("\t"))
         fw.write("\n")
+
+        val rows = new Iterator[String] {
+          def hasNext = rs.next
+          def next = {
+            for (i <- 1 to columns.length) yield optString(rs, i, "NULL")
+          } mkString "\t"
+        }
+
+        rows.take(MAX_RESULT) foreach { line =>
+          fw.write(line)
+          fw.write("\n")
+        }
+
+      } else {
+
+        val rs = runUpdate(conn.hive, sqlWithPrefix, () => Task.isInterrupted(taskId))
+        fw.write("affected rows\n")
+        fw.write(rs.toString)
+        fw.write("\n")
+
       }
 
     } finally {
@@ -275,13 +288,16 @@ object HiveUtil extends Loggable {
     }
   }
 
+  private def removeComments(sql: String): String = {
+    var result = sql;
+    result = "(?s)/\\*.*?\\*/".r.replaceAllIn(result, "")
+    result = "(?m)--.*$".r.replaceAllIn(result, "")
+    result.trim
+  }
+
   private def abridgeSql(sql: String): String = {
 
     var result = sql;
-
-    // remove comments
-    result = "(?s)/\\*.*?\\*/".r.replaceAllIn(result, "")
-    result = "(?m)--.*$".r.replaceAllIn(result, "")
 
     // replace new line
     result = "[\\r\\n]+".r.replaceAllIn(result, " ")
@@ -305,11 +321,19 @@ object HiveUtil extends Loggable {
   }
 
   def runQuery(conn: Connection, sql: String, isInterrupted: () => Boolean)(implicit taskId: Long): ResultSet = {
+    runStatement(conn, sql, (stmt, sql) => stmt.executeQuery(sql), isInterrupted)
+  }
+
+  def runUpdate(conn: Connection, sql: String, isInterrupted: () => Boolean)(implicit taskId: Long): Int = {
+    runStatement(conn, sql, (stmt, sql) => stmt.executeUpdate(sql), isInterrupted)
+  }
+
+  private def runStatement[T](conn: Connection, sql: String, execute: (Statement, String) => T, isInterrupted: () => Boolean)(implicit taskId: Long): T = {
 
     val (stmt, lastSql) = runUntil(conn, sql)
 
     val resultFuture = Future {
-      stmt.executeQuery(lastSql)
+      execute(stmt, lastSql)
     }
 
     while (!isInterrupted()) {
@@ -380,6 +404,9 @@ object HiveUtil extends Loggable {
     columns.toList
   }
 
+  private def isQuery(sql: String): Boolean = {
+    val ptrn = "(?i)^SELECT\\s+".r
+    ptrn.findFirstIn(sql).nonEmpty
+  }
+
 }
-
-
