@@ -9,7 +9,7 @@ scalaVersion := "2.10.0"
 resolvers ++= Seq("snapshots"     at "http://oss.sonatype.org/content/repositories/snapshots",
                   "staging"       at "http://oss.sonatype.org/content/repositories/staging",
                   "releases"      at "http://oss.sonatype.org/content/repositories/releases",
-                  "cloudera"      at "https://repository.cloudera.com/artifactory/cloundera-repos/",
+                  "cloudera"      at "https://repository.cloudera.com/artifactory/cloudera-repos/",
                   "spring"        at "http://repo.springsource.org/libs-release-remote/"
                  )
 

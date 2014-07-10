@@ -37,35 +37,42 @@ object HiveUtil extends Loggable {
   def execute(task: Task) {
 
     implicit val taskId = task.id.get
+    implicit val conn = new Conn
 
-    val ptrnH2m = "(?i)EXPORT\\s+HIVE\\s+(\\w+)\\.(\\w+)\\s+TO\\s+MYSQL\\s+(\\w+)\\.(\\w+)(\\s+PARTITION\\s+(\\w+))?".r
-    val ptrnM2h = "(?i)EXPORT\\s+MYSQL\\s+(\\w+)\\.(\\w+)\\s+TO\\s+HIVE\\s+(\\w+)\\.(\\w+)".r
+    try {
 
-    val optH2m = ptrnH2m.findFirstMatchIn(task.query.get)
-    val optM2h = ptrnM2h.findFirstMatchIn(task.query.get)
+      val ptrnH2m = "(?i)EXPORT\\s+HIVE\\s+(\\w+)\\.(\\w+)\\s+TO\\s+MYSQL\\s+(\\w+)\\.(\\w+)(\\s+PARTITION\\s+(\\w+))?".r
+      val ptrnM2h = "(?i)EXPORT\\s+MYSQL\\s+(\\w+)\\.(\\w+)\\s+TO\\s+HIVE\\s+(\\w+)\\.(\\w+)".r
 
-    if (optH2m.nonEmpty) {
-      val matcher = optH2m.get
-      exportHiveToMysql(hiveDatabase = matcher.group(1),
-                        hiveTable = matcher.group(2),
-                        mysqlDatabase = matcher.group(3),
-                        mysqlTable = matcher.group(4),
-                        partition = matcher.group(6))
-    } else if (optM2h.nonEmpty) {
-      val matcher = optM2h.get
-      exportMysqlToHive(mysqlDatabase = matcher.group(1),
-                        mysqlTable = matcher.group(2),
-                        hiveDatabase = matcher.group(3),
-                        hiveTable = matcher.group(4))
-    } else {
-      executeHive(task.query.get, task.prefix.get)
+      val optH2m = ptrnH2m.findFirstMatchIn(task.query.get)
+      val optM2h = ptrnM2h.findFirstMatchIn(task.query.get)
+
+      if (optH2m.nonEmpty) {
+        val matcher = optH2m.get
+        exportHiveToMysql(hiveDatabase = matcher.group(1),
+                          hiveTable = matcher.group(2),
+                          mysqlDatabase = matcher.group(3),
+                          mysqlTable = matcher.group(4),
+                          partition = matcher.group(6))
+      } else if (optM2h.nonEmpty) {
+        val matcher = optM2h.get
+        exportMysqlToHive(mysqlDatabase = matcher.group(1),
+                          mysqlTable = matcher.group(2),
+                          hiveDatabase = matcher.group(3),
+                          hiveTable = matcher.group(4))
+      } else {
+        executeHive(task.query.get, task.prefix.get)
+      }
+
+    } finally {
+      conn.close
     }
 
   }
 
   private def exportHiveToMysql(hiveDatabase: String, hiveTable: String,
       mysqlDatabase: String, mysqlTable: String,
-      partition: String)(implicit taskId: Long) {
+      partition: String)(implicit taskId: Long, conn: Conn) {
 
     ensureMysqlTable(hiveDatabase, hiveTable, mysqlDatabase, mysqlTable)
 
@@ -92,62 +99,54 @@ object HiveUtil extends Loggable {
 
     // load into mysql
     if (partition != null) {
-      MysqlUtil.runUpdate(s"DELETE FROM ${mysqlDatabase}.${mysqlTable} WHERE ${partition} = '${getDealDate}'", isInterrupted)
+      MysqlUtil.runUpdate(conn.mysql, s"DELETE FROM ${mysqlDatabase}.${mysqlTable} WHERE ${partition} = '${getDealDate}'", isInterrupted)
     } else {
-      MysqlUtil.runUpdate(s"TRUNCATE TABLE ${mysqlDatabase}.${mysqlTable}")
+      MysqlUtil.runUpdate(conn.mysql, s"TRUNCATE TABLE ${mysqlDatabase}.${mysqlTable}")
     }
-    MysqlUtil.runUpdate(s"LOAD DATA INFILE '${mysqlDataFile}' INTO TABLE ${mysqlDatabase}.${mysqlTable}", isInterrupted)
+    MysqlUtil.runUpdate(conn.mysql, s"LOAD DATA INFILE '${mysqlDataFile}' INTO TABLE ${mysqlDatabase}.${mysqlTable}", isInterrupted)
 
   }
 
   private def ensureMysqlTable(hiveDatabase: String, hiveTable: String,
-      mysqlDatabase: String, mysqlTable: String): Unit = {
+      mysqlDatabase: String, mysqlTable: String)(implicit conn: Conn): Unit = {
 
-    if (MysqlUtil.tableExists(mysqlDatabase, mysqlTable)) {
+    if (MysqlUtil.tableExists(conn.mysql, mysqlDatabase, mysqlTable)) {
       return
     }
 
     logger.info("Creating MySQL table...")
 
-    val conn = getConnection
-
-    try {
-
-      val rs = runQuery(conn, s"USE ${hiveDatabase}; DESC ${hiveTable}")
-      val columns = fetchResult(rs) map { row =>
-        Column(row(0), row(1), row(2))
-      }
-
-      if (columns.isEmpty) {
-        throw new Exception("Hive table does not exist.")
-      }
-
-      val createSql = new StringBuilder(s"CREATE TABLE ${mysqlDatabase}.${mysqlTable} (\n")
-
-      val columnsMapped = columns map { column =>
-        val columnType = column.dataType.toLowerCase match {
-          case s if s.startsWith("bigint") => "BIGINT"
-          case s if s.startsWith("int") => "INT"
-          case s if s.startsWith("float") => "FLOAT"
-          case s if s.startsWith("double") => "DOUBLE"
-          case _ => "VARCHAR(255)"
-        }
-        s"  `${column.name}` ${columnType}"
-      }
-      createSql ++= columnsMapped mkString ",\n"
-
-      createSql ++= "\n)"
-
-      MysqlUtil.runUpdate(createSql.toString)
-
-    } finally {
-      conn.close
+    val rs = runQuery(conn.hive, s"USE ${hiveDatabase}; DESC ${hiveTable}")
+    val columns = fetchResult(rs) map { row =>
+      Column(row(0), row(1), row(2))
     }
+
+    if (columns.isEmpty) {
+      throw new Exception("Hive table does not exist.")
+    }
+
+    val createSql = new StringBuilder(s"CREATE TABLE ${mysqlDatabase}.${mysqlTable} (\n")
+
+    val columnsMapped = columns map { column =>
+      val columnType = column.dataType.toLowerCase match {
+        case s if s.startsWith("bigint") => "BIGINT"
+        case s if s.startsWith("int") => "INT"
+        case s if s.startsWith("float") => "FLOAT"
+        case s if s.startsWith("double") => "DOUBLE"
+        case _ => "VARCHAR(255)"
+      }
+      s"  `${column.name}` ${columnType}"
+    }
+    createSql ++= columnsMapped mkString ",\n"
+
+    createSql ++= "\n)"
+
+    MysqlUtil.runUpdate(conn.mysql, createSql.toString)
 
   }
 
   private def exportMysqlToHive(mysqlDatabase: String, mysqlTable: String,
-      hiveDatabase: String, hiveTable: String)(implicit taskId: Long) {
+      hiveDatabase: String, hiveTable: String)(implicit taskId: Long, conn: Conn) {
 
     ensureHiveTable(mysqlDatabase, mysqlTable, hiveDatabase, hiveTable)
 
@@ -159,7 +158,7 @@ object HiveUtil extends Loggable {
     val mysqlDataFile = s"${MYSQL_FOLDER}/${dataFileName}"
 
     CommandUtil.run(Seq("ssh", s"dwadmin@${MysqlUtil.getMysqlIp}", "rm", "-f", mysqlDataFile))
-    MysqlUtil.export(mysqlDatabase, mysqlTable, mysqlDataFile, MAX_RESULT)
+    MysqlUtil.export(conn.mysql, mysqlDatabase, mysqlTable, mysqlDataFile, MAX_RESULT)
 
     // rsync
     CommandUtil.run(Seq("rsync", "-vW", s"${MysqlUtil.getMysqlIp}::dw_tmp_file/$dataFileName", hiveDataFile), isInterrupted)
@@ -170,57 +169,49 @@ object HiveUtil extends Loggable {
   }
 
   private def ensureHiveTable(mysqlDatabase: String, mysqlTable: String,
-      hiveDatabase: String, hiveTable: String): Unit = {
+      hiveDatabase: String, hiveTable: String)(implicit conn: Conn): Unit = {
 
-    val conn = getConnection
-
-    try {
-      val rs = runQuery(conn, s"USE ${hiveDatabase}; SHOW TABLES LIKE '${hiveTable}'")
-      if (rs.next) {
-        return
-      }
-
-      logger.info("Creating Hive table...")
-
-      val columns = MysqlUtil.getColumns(mysqlDatabase, mysqlTable)
-      if (columns.isEmpty) {
-        throw new Exception("MySQL table does not exist.")
-      }
-
-      val createSql = new StringBuilder(s"CREATE TABLE ${hiveDatabase}.${hiveTable} (\n")
-
-      val columnsMapped = columns map { column =>
-        val hiveType = column.dataType match {
-          case s if s.startsWith("bigint") => "BIGINT"
-          case s if s.startsWith("int") => "INT"
-          case s if s.startsWith("float") => "FLOAT"
-          case s if s.startsWith("double") => "DOUBLE"
-          case s if s.startsWith("decimal") => "DOUBLE"
-         case _ => "STRING"
-        }
-        s"  `${column.name}` $hiveType"
-      }
-      createSql ++= columnsMapped mkString ",\n"
-
-      createSql ++= "\n)\nROW FORMAT DELIMITED FIELDS TERMINATED BY '\\t';\n"
-
-      runQuery(conn, createSql.toString)
-
-    } finally {
-      conn.close
+    val rs = runQuery(conn.hive, s"USE ${hiveDatabase}; SHOW TABLES LIKE '${hiveTable}'")
+    if (rs.next) {
+      return
     }
+
+    logger.info("Creating Hive table...")
+
+    val columns = MysqlUtil.getColumns(conn.mysql, mysqlDatabase, mysqlTable)
+    if (columns.isEmpty) {
+      throw new Exception("MySQL table does not exist.")
+    }
+
+    val createSql = new StringBuilder(s"CREATE TABLE ${hiveDatabase}.${hiveTable} (\n")
+
+    val columnsMapped = columns map { column =>
+      val hiveType = column.dataType match {
+        case s if s.startsWith("bigint") => "BIGINT"
+        case s if s.startsWith("int") => "INT"
+        case s if s.startsWith("float") => "FLOAT"
+        case s if s.startsWith("double") => "DOUBLE"
+        case s if s.startsWith("decimal") => "DOUBLE"
+       case _ => "STRING"
+      }
+      s"  `${column.name}` $hiveType"
+    }
+    createSql ++= columnsMapped mkString ",\n"
+
+    createSql ++= "\n)\nROW FORMAT DELIMITED FIELDS TERMINATED BY '\\t';\n"
+
+    runQuery(conn.hive, createSql.toString)
   }
 
-  private def executeHive(sql: String, prefix: String)(implicit taskId: Long) {
+  private def executeHive(sql: String, prefix: String)(implicit taskId: Long, conn: Conn) {
 
     val sqlWithPrefix = s"SET mapred.job.name = HS$taskId $prefix ${abridgeSql(sql)};\n" + sql
 
     val fw = new FileWriter(outputFile, true)
-    val conn = getConnection
 
     try {
 
-      val rs = runQuery(conn, sqlWithPrefix, () => Task.isInterrupted(taskId))
+      val rs = runQuery(conn.hive, sqlWithPrefix, () => Task.isInterrupted(taskId))
 
       val columns = getColumns(rs)
       fw.write(columns.map(_.name).mkString("\t"))
@@ -239,7 +230,6 @@ object HiveUtil extends Loggable {
       }
 
     } finally {
-      conn.close
       fw.close
     }
   }
@@ -391,3 +381,5 @@ object HiveUtil extends Loggable {
   }
 
 }
+
+
