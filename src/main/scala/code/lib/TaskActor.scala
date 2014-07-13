@@ -1,10 +1,13 @@
 package code.lib
 
-import akka.actor.Actor
+import akka.actor.{Actor, Status}
 import code.model.Task
-import net.liftweb.common.Loggable
+import net.liftweb.common.{Loggable, Full, Empty}
 import net.liftweb.mapper._
 import code.util.{CommandUtil, HiveUtil}
+import net.liftweb.json._
+import net.liftweb.json.JsonDSL._
+import scala.io.Source
 
 object TaskActor {
 
@@ -13,6 +16,8 @@ object TaskActor {
 class TaskActor extends Actor with Loggable {
 
   import TaskActor._
+
+  implicit val formats = DefaultFormats
 
   override def preStart = {
     logger.info("taskActor started")
@@ -24,8 +29,78 @@ class TaskActor extends Actor with Loggable {
 
   def receive = {
     case taskId: Long => process(taskId)
-    case 'Ping => sender ! 'Pong
+    case data: String => processJson(data)
     case _ => logger.debug("Unkown message.")
+  }
+
+  private def processJson(data: String): Unit = {
+
+    try {
+
+      val json = parse(data)
+      (json \ "action").extract[String] match {
+        case "enqueue" =>
+          val query = (json \ "query").extractOrElse[String]("")
+          val prefix = (json \ "prefix").extractOrElse[String]("")
+
+          if (query.isEmpty) {
+            throw new Exception("Query cannot be empty.")
+          }
+
+          val task = Task.create
+              .query(query)
+              .prefix(prefix)
+              .status(Task.STATUS_PENDING)
+              .saveMe()
+
+          val res = ("status" -> "ok") ~ ("id" -> task.id.get)
+          sender ! compact(render(res))
+
+          logger.info("Enqueued task id " + task.id.get)
+
+        case "execute" =>
+          val taskId = (json \ "id").extract[Long]
+          Task.find(taskId) match {
+            case Full(task) =>
+              if (task.status.get == Task.STATUS_PENDING) {
+                process(taskId)
+              } else {
+                throw new Exception("Task is not pending.")
+              }
+            case _ => throw new Exception("Task not found.")
+          }
+
+          val task = Task.find(taskId).openOrThrowException("Task not found.")
+
+          val res = task.status.get match {
+            case Task.STATUS_OK => ("status", "ok") ~ ("taskStatus", "ok")
+
+            case Task.STATUS_ERROR => {
+
+              var errorMessage = ""
+
+              try {
+                val source = Source.fromFile(HiveUtil.errorFile(task.id.get))
+                errorMessage = source.getLines.mkString("\n")
+                source.close
+              } catch {
+                case e: Exception => errorMessage = "Unable to get error message."
+              }
+
+              ("status", "ok") ~ ("taskStatus", "error") ~ ("taskErrorMessage", errorMessage)
+            }
+
+            case _ => throw new Exception("Task is not finished.")
+          }
+
+          sender ! compact(render(res))
+      }
+
+    } catch {
+      case e: Exception =>
+        logger.error("Fail to process actor request.", e)
+        sender ! compact(render(("status" -> "error") ~ ("msg" -> e.toString)))
+    }
   }
 
   private def process(taskId: Long): Unit = {
