@@ -5,3 +5,6 @@ db.password=password
 
 hadoop.jobtracker=127.0.0.1:8021
 hadoop.hiveserver2=127.0.0.1:10000
+
+akka.remote.netty.hostname=127.0.0.1
+akka.remote.netty.port=2552

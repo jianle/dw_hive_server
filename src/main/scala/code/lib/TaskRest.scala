@@ -37,35 +37,19 @@ object TaskRest extends RestHelper with Loggable {
   serve("api" / "task" prefix {
 
     case "submit" :: Nil JsonPost json -> _ => {
-
-      val query = (json \ "query").extractOrElse[String]("")
-      val prefix = (json \ "prefix").extractOrElse[String]("")
-
-      if (query.isEmpty) {
-        ("status", "error") ~ ("msg", "Query cannot be empty.")
-      } else {
-
-          val task = Task.create
-            .query(query)
-            .prefix(prefix)
-            .status(Task.STATUS_NEW)
-            .saveMe()
-
-          task.doPostCommit(() => taskActor.map(_ ! task.id.get))
-
-          logger.info("Submitted task id " + task.id.get)
-
-          ("status", "ok") ~ ("id", task.id.get)
+      try {
+        val task = TaskActor.createTask(json, Task.STATUS_NEW)
+        task.doPostCommit(() => taskActor.map(_ ! task.id.get))
+        logger.info("Submitted task id " + task.id.get)
+        ("status", "ok") ~ ("id", task.id.get)
+      } catch {
+        case e: Exception => ("status", "error") ~ ("msg", e.toString)
       }
     }
 
-    case "status" :: taskId JsonGet _ => {
-
-      val task = Task.find(taskId(0).toLong) openOr null
-
-      if (task == null) {
-        ("status", "error") ~ ("msg", "Task id not found.")
-      } else {
+    case "status" :: taskId :: Nil JsonGet _ => {
+      try {
+        val task = Task.find(taskId.toLong).openOrThrowException("Task id not found.")
 
         val taskStatus = task.status.get match {
           case Task.STATUS_NEW => "new"
@@ -76,22 +60,16 @@ object TaskRest extends RestHelper with Loggable {
           case _ => "unknown"
         }
 
-        if (taskStatus.equals("error")) {
+        val res = ("status" -> "ok") ~ ("taskStatus" -> taskStatus)
 
-          var errorMessage = ""
-
-          try {
-            val source = Source.fromFile(HiveUtil.errorFile(task.id.get))
-            errorMessage = source.getLines.mkString("\n")
-            source.close
-          } catch {
-            case e: Exception => errorMessage = "Unable to get error message."
-          }
-
-          ("status", "ok") ~ ("taskStatus", taskStatus) ~ ("taskErrorMessage", errorMessage)
+        if (taskStatus == "error") {
+          res ~ ("taskErrorMessage" -> TaskActor.getErrorMessage(task.id.get))
         } else {
-          ("status", "ok") ~ ("taskStatus", taskStatus)
+          res
         }
+
+      } catch {
+        case e: Exception => ("status" -> "error") ~ ("msg" -> e.toString)
       }
 
     }

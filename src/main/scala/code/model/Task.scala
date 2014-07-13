@@ -10,6 +10,7 @@ class Task extends LongKeyedMapper[Task]
   val STATUS_OK = 3
   val STATUS_ERROR = 4
   val STATUS_INTERRUPTED = 5
+  val STATUS_PENDING = 6
 
   def getSingleton = Task
 

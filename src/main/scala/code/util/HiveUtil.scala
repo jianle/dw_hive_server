@@ -233,10 +233,6 @@ object HiveUtil extends Loggable {
           fw.write("\n")
         }
 
-      } else if (uc != -1) {
-        fw.write("affected rows\n")
-        fw.write(uc.toString)
-        fw.write("\n")
       }
 
     } finally {
