@@ -24,6 +24,7 @@ class TaskActor extends Actor with Loggable {
 
   def receive = {
     case taskId: Long => process(taskId)
+    case 'Ping => sender ! 'Pong
     case _ => logger.debug("Unkown message.")
   }
 

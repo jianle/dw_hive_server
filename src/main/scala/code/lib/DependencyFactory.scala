@@ -8,7 +8,7 @@ import net.liftweb.http.LiftRules
 import net.liftweb.http.LiftRulesMocker.toLiftRules
 import net.liftweb.util.Vendor.valToVender
 import net.liftweb.util.Helpers
-import akka.routing.BalancingPool
+import akka.routing.SmallestMailboxRouter
 
 object DependencyFactory extends Factory {
 
@@ -17,7 +17,7 @@ object DependencyFactory extends Factory {
   implicit object time extends FactoryMaker(Helpers.now)
 
   private def makeTaskActor = {
-    val props = BalancingPool(10).props(Props[TaskActor])
+    val props = Props[TaskActor].withRouter(SmallestMailboxRouter(10))
     actorSystem.actorOf(props, "taskActor")
   }
 
