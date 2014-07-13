@@ -11,13 +11,44 @@ import scala.io.Source
 
 object TaskActor {
 
+  implicit val formats = DefaultFormats
+
+  def createTask(json: JValue, status: Int): Task = {
+
+    val query = (json \ "query").extractOrElse[String]("").trim
+    val prefix = (json \ "prefix").extractOrElse[String]("").trim
+
+    if (query.isEmpty) {
+      throw new Exception("Query cannot be empty.")
+    }
+
+    Task.create
+        .query(query)
+        .prefix(prefix)
+        .status(status)
+        .saveMe()
+  }
+
+  def getErrorMessage(taskId: Long): String = {
+
+    var errorMessage = ""
+
+    try {
+      val source = Source.fromFile(HiveUtil.errorFile(taskId))
+      errorMessage = source.getLines.mkString("\n")
+      source.close
+    } catch {
+      case e: Exception => errorMessage = "Unable to get error message."
+    }
+
+    errorMessage
+  }
+
 }
 
 class TaskActor extends Actor with Loggable {
 
   import TaskActor._
-
-  implicit val formats = DefaultFormats
 
   override def preStart = {
     logger.info("taskActor started")
@@ -40,22 +71,9 @@ class TaskActor extends Actor with Loggable {
       val json = parse(data)
       (json \ "action").extract[String] match {
         case "enqueue" =>
-          val query = (json \ "query").extractOrElse[String]("")
-          val prefix = (json \ "prefix").extractOrElse[String]("")
-
-          if (query.isEmpty) {
-            throw new Exception("Query cannot be empty.")
-          }
-
-          val task = Task.create
-              .query(query)
-              .prefix(prefix)
-              .status(Task.STATUS_PENDING)
-              .saveMe()
-
+          val task = createTask(json, Task.STATUS_PENDING)
           val res = ("status" -> "ok") ~ ("id" -> task.id.get)
           sender ! compact(render(res))
-
           logger.info("Enqueued task id " + task.id.get)
 
         case "execute" =>
@@ -74,22 +92,7 @@ class TaskActor extends Actor with Loggable {
 
           val res = task.status.get match {
             case Task.STATUS_OK => ("status", "ok") ~ ("taskStatus", "ok")
-
-            case Task.STATUS_ERROR => {
-
-              var errorMessage = ""
-
-              try {
-                val source = Source.fromFile(HiveUtil.errorFile(task.id.get))
-                errorMessage = source.getLines.mkString("\n")
-                source.close
-              } catch {
-                case e: Exception => errorMessage = "Unable to get error message."
-              }
-
-              ("status", "ok") ~ ("taskStatus", "error") ~ ("taskErrorMessage", errorMessage)
-            }
-
+            case Task.STATUS_ERROR => ("status", "ok") ~ ("taskStatus", "error") ~ ("taskErrorMessage", getErrorMessage(task.id.get))
             case _ => throw new Exception("Task is not finished.")
           }
 
