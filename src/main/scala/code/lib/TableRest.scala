@@ -47,10 +47,12 @@ object TableRest extends RestHelper with Loggable {
 
       val sizeFuture = sizeCommandFuture map { result =>
         if (result.code == 0) {
-          val lines = result.stdout.split("\n")
-          val ptrn = "[0-9]+$".r
-          lines.map(ptrn.findFirstIn _).filter(_.nonEmpty).headOption match {
-            case Some(o) => o.get.toLong
+          result.stdout.split("\n") flatMap { line =>
+            Seq("^[0-9]+", "[0-9]+$") flatMap { regexp =>
+              regexp.r.findFirstIn(line)
+            }
+          } headOption match {
+            case Some(s) => s.toLong
             case None => 0
           }
         } else  0
