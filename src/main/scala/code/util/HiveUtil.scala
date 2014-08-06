@@ -188,7 +188,7 @@ object HiveUtil extends Loggable {
     val columnsMapped = columns map { column =>
       val hiveType = column.dataType match {
         case s if s.startsWith("bigint") => "BIGINT"
-        case s if s.startsWith("int") => "INT"
+        case s if s.matches("^(tiny|small|medium)?int.*") => "INT"
         case s if s.startsWith("float") => "FLOAT"
         case s if s.startsWith("double") => "DOUBLE"
         case s if s.startsWith("decimal") => "DOUBLE"
