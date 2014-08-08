@@ -7,6 +7,7 @@ class Conn extends Loggable {
 
   var _mysql: Connection = null
   var _hive: Connection = null
+  var _shark: Connection = null
 
   def mysql: Connection = {
     if (_mysql == null) _mysql = MysqlUtil.getConnection
@@ -14,8 +15,13 @@ class Conn extends Loggable {
   }
 
   def hive: Connection = {
-    if (_hive == null) _hive = HiveUtil.getConnection
+    if (_hive == null) _hive = HiveUtil.getConnection("hadoop.hiveserver2")
     _hive
+  }
+
+  def shark: Connection = {
+    if (_shark == null) _shark = HiveUtil.getConnection("hadoop.sharkserver2")
+    _shark
   }
 
   implicit def enrichConnection(conn: Connection) = new {
@@ -31,6 +37,7 @@ class Conn extends Loggable {
   def close(): Unit = {
     if (_mysql != null) _mysql.closeQuietly
     if (_hive != null) _hive.closeQuietly
+    if (_shark != null) _shark.closeQuietly
   }
 
 }

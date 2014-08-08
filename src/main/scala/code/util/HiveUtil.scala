@@ -19,6 +19,7 @@ object HiveUtil extends Loggable {
   val HIVE_FOLDER = "/data/dwlogs/tmplog"
   val MYSQL_FOLDER = "/tmp/dw_tmp_file"
   val MAX_RESULT = 1000000
+  val FETCH_SIZE = 1000
 
   def outputFile(implicit taskId: Long): String = {
     s"${HIVE_FOLDER}/hive_server_task_${taskId}.out"
@@ -213,7 +214,7 @@ object HiveUtil extends Loggable {
 
     try {
 
-      val (rs, uc) = runQuery(conn.hive, sqlWithPrefix, () => Task.isInterrupted(taskId))
+      val (rs, uc) = runQuery(sqlWithPrefix, () => Task.isInterrupted(taskId))
 
       if (rs != null) {
 
@@ -302,22 +303,44 @@ object HiveUtil extends Loggable {
     result
   }
 
-  def getConnection(): Connection = {
+  def getConnection(serverKey: String): Connection = {
     Class.forName("org.apache.hive.jdbc.HiveDriver")
-    val hiveserver2 = Props.get("hadoop.hiveserver2").openOrThrowException("hadoop.hiveserver2 not found")
-    DriverManager.getConnection(s"jdbc:hive2://$hiveserver2", "hadoop", "")
+    val server = Props.get(serverKey).openOrThrowException(s"$serverKey not found")
+    DriverManager.getConnection(s"jdbc:hive2://$server", "hadoop", "")
   }
 
   def runQuery(conn: Connection, sql: String): (ResultSet, Int) = {
-    val (stmt, lastSql) = runUntil(conn, sql)
+
+    val (bufferSqls, lastSql) = divideSql(sql)
+
+    val stmt = conn.createStatement
+    bufferSqls.foreach(stmt.execute)
+
+    stmt.setFetchSize(FETCH_SIZE)
     stmt.execute(lastSql)
+
     (stmt.getResultSet, stmt.getUpdateCount)
   }
 
-  def runQuery(conn: Connection, sql: String, isInterrupted: () => Boolean)(implicit taskId: Long): (ResultSet, Int) = {
+  def runQuery(sql: String, isInterrupted: () => Boolean)(implicit taskId: Long, conn: Conn): (ResultSet, Int) = {
 
-    val (stmt, lastSql) = runUntil(conn, sql)
+    val (bufferSqls, lastSql) = divideSql(sql)
 
+    val ptrnEngine = "^(?i:SET)\\s+dw\\.engine\\s*=\\s*(hive|shark)$".r
+    val engine = bufferSqls.flatMap(ptrnEngine.findFirstMatchIn).map(_.group(1)).lastOption match {
+      case Some("shark") if sharkable(lastSql) => "shark"
+      case _ => "hive"
+    }
+
+    val connection = engine match {
+      case "shark" => conn.shark
+      case _ => conn.hive
+    }
+
+    val stmt = connection.createStatement
+    bufferSqls.foreach(stmt.execute)
+
+    stmt.setFetchSize(FETCH_SIZE)
     val resultFuture = Future {
       stmt.execute(lastSql)
       (stmt.getResultSet, stmt.getUpdateCount)
@@ -332,12 +355,17 @@ object HiveUtil extends Loggable {
     }
 
     logger.info(s"Cancelling task id: $taskId")
-    cleanupMapred
+    engine match {
+      case "hive" => cleanupMapred
+      case _ =>
+    }
 
     /*
      * Since stmt.cancel is not implemented until Hive 0.13, the only way
      * to stop a HiveServer2 query is to kill the corresponding map-reduce job,
      * or we'll have to wait for it to complete.
+     *
+     * As for shark, not implemented yet.
      */
     try {
       logger.info(s"Waiting for cancelled task to complete, id: $taskId")
@@ -347,19 +375,27 @@ object HiveUtil extends Loggable {
     }
   }
 
-  private def runUntil(conn: Connection, sql: String) = {
+  private def divideSql(sql: String): (Seq[String], String) = {
 
     val sqls = sql.split(";").map(_.trim).filter(_.nonEmpty)
     if (sqls.isEmpty) {
       throw new Exception("SQL cannot be empty.")
     }
 
-    val stmt = conn.createStatement
-    sqls.take(sqls.length - 1).foreach(stmt.execute)
+    (sqls.take(sqls.length - 1).toSeq, sqls.last)
+  }
 
-    stmt.setFetchSize(1000)
+  private def sharkable(sql: String): Boolean = {
 
-    (stmt, sqls.last)
+    if (sql.matches("(?i)^DROP|ALTER|LOAD.*")) {
+      return false;
+    }
+
+    if (sql.matches("(?i)^(CREATE|INSERT).*?PARTITION.*")) {
+      return false;
+    }
+
+    true
   }
 
   def fetchResult(rs: ResultSet): List[List[String]] = {
