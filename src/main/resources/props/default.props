@@ -5,6 +5,7 @@ db.password=password
 
 hadoop.jobtracker=127.0.0.1:8021
 hadoop.hiveserver2=127.0.0.1:10000
+hadoop.sharkserver2=127.0.0.1:10001
 
 akka.remote.netty.hostname=127.0.0.1
 akka.remote.netty.port=2552
