@@ -11,6 +11,9 @@ import scala.concurrent.{Future, Await, TimeoutException}
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.sys.process._
+import net.liftweb.json._
+import net.liftweb.json.JsonDSL._
+import org.apache.commons.lang.mutable.MutableLong
 
 case class Column(val name: String, val dataType: String, val comment: String = "")
 
@@ -29,11 +32,17 @@ object HiveUtil extends Loggable {
     s"${HIVE_FOLDER}/hive_server_task_${taskId}.err"
   }
 
+  def metaFile(implicit taskId: Long): String = {
+    s"${HIVE_FOLDER}/hive_server_task_${taskId}.meta"
+  }
+
   def writeError(content: String, append: Boolean = true)(implicit taskId: Long): Unit = {
     val fw = new FileWriter(errorFile(taskId), append)
     fw.write(content)
     fw.close
   }
+
+  implicit val formats = DefaultFormats
 
   def execute(task: Task) {
 
@@ -229,6 +238,7 @@ object HiveUtil extends Loggable {
     val sqlWithPrefix = s"SET mapred.job.name = HS$taskId $prefix ${sqlAbridged};\n" + sqlWithoutComments
 
     val fw = new FileWriter(outputFile, true)
+    val meta = new FileWriter(metaFile, true)
 
     try {
 
@@ -247,15 +257,25 @@ object HiveUtil extends Loggable {
           } mkString "\t"
         }
 
+        val numRows = new MutableLong
         rows.take(MAX_RESULT) foreach { line =>
           fw.write(line)
           fw.write("\n")
+          numRows.increment
         }
+
+        // meta
+        val metaColumns = columns.map({ column =>
+          ("name" -> column.name) ~ ("dataType" -> column.dataType)
+        })
+        val metaContent = pretty(render(("columns" -> metaColumns) ~ ("rows" -> numRows.longValue)))
+        meta.write(metaContent)
 
       }
 
     } finally {
       fw.close
+      meta.close
     }
   }
 
