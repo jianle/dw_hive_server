@@ -385,7 +385,7 @@ object HiveUtil extends Loggable {
     (sqls.take(sqls.length - 1).toSeq, sqls.last)
   }
 
-  private def sharkable(sql: String): Boolean = {
+  private def sharkable(sql: String)(implicit conn: Conn): Boolean = {
 
     if (sql.matches("(?i)^(DROP|ALTER|LOAD).*")) {
       return false;
@@ -395,7 +395,17 @@ object HiveUtil extends Loggable {
       return false;
     }
 
-    true
+    if ("(?i)GET_JSON_OBJECT".r.findFirstIn(sql).nonEmpty) {
+      return false;
+    }
+
+    // test connection
+    try {
+        conn.shark
+        true
+    } catch {
+      case _: Exception => false
+    }
   }
 
   def fetchResult(rs: ResultSet): List[List[String]] = {
