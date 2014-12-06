@@ -78,7 +78,25 @@ object MysqlUtil extends Loggable {
   }
 
   def export(conn: Connection, database: String, table: String, filename: String, limit: Int): Unit = {
-    val sql = s"SELECT * FROM $database.$table LIMIT $limit INTO OUTFILE '$filename'"
+
+    val columns = getColumns(conn, database, table)
+    if (columns.isEmpty) {
+      throw new Exception("MySQL table does not exist.")
+    }
+
+    val ptrnCleanse = "(?i)CHAR|TEXT|BLOB".r
+    val columnsMapped = columns map { column =>
+      ptrnCleanse.findFirstIn(column.dataType) match {
+        case Some(_) => s"  REPLACE(REPLACE(REPLACE(`${column.name}`, '\\t', ' '), '\\r', ''), '\\n', ' ')"
+        case None => s"  `${column.name}`"
+      }
+    }
+
+    val sqlBuilder = new StringBuilder("SELECT\n")
+    sqlBuilder.append(columnsMapped.mkString(",\n")).append("\n")
+    sqlBuilder.append(s"FROM $database.$table LIMIT $limit INTO OUTFILE '$filename'")
+
+    val sql = sqlBuilder.toString
     logger.info(s"MySQL - $sql")
 
     val stmt = conn.createStatement
