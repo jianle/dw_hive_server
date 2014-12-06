@@ -388,15 +388,23 @@ object HiveUtil extends Loggable {
   private def sharkable(sql: String)(implicit conn: Conn): Boolean = {
 
     if (sql.matches("(?is)^(DROP|ALTER|LOAD).*")) {
-      return false;
+      return false
     }
 
     if (sql.matches("(?is)^(CREATE|INSERT).*?PARTITION.*")) {
-      return false;
+      return false
+    }
+
+    if (sql.matches("(?is)^CREATE.*?TABLE.*?JOIN.*")) {
+      return false
+    }
+
+    if ("(?is)LEFT\\s+OUTER\\s+JOIN".r.findAllIn(sql).size > 1) {
+      return false
     }
 
     if ("(?i)GET_JSON_OBJECT".r.findFirstIn(sql).nonEmpty) {
-      return false;
+      return false
     }
 
     // test connection
