@@ -98,14 +98,24 @@ object HiveUtil extends Loggable {
     // rsync
     CommandUtil.run(Seq("rsync", "-vW", hiveDataFile, s"${MysqlUtil.getMysqlIp}::dw_tmp_file/${dataFileName}"), isInterrupted)
 
-    // load into mysql
+    // delete from mysql
     if (partition != null) {
       MysqlUtil.runUpdate(conn.mysql, s"DELETE FROM ${mysqlDatabase}.${mysqlTable} WHERE ${partition} = '${getDealDate}'", isInterrupted)
     } else {
       MysqlUtil.runUpdate(conn.mysql, s"TRUNCATE TABLE ${mysqlDatabase}.${mysqlTable}")
     }
-    MysqlUtil.runUpdate(conn.mysql, s"LOAD DATA INFILE '${mysqlDataFile}' INTO TABLE ${mysqlDatabase}.${mysqlTable}", isInterrupted)
 
+    // re-order columns
+    val columns = getColumns(conn.hive, hiveDatabase, hiveTable).map(_.name)
+    val columnsOrdered = if (partition != null) {
+      columns.filter(_ != partition) :+ partition
+    } else {
+      columns
+    }
+    val mysqlColumns = columnsOrdered.map(name => s"`${name}`").mkString(", ")
+
+    // load into mysql
+    MysqlUtil.runUpdate(conn.mysql, s"LOAD DATA INFILE '${mysqlDataFile}' INTO TABLE ${mysqlDatabase}.${mysqlTable} (${mysqlColumns})", isInterrupted)
   }
 
   private def ensureMysqlTable(hiveDatabase: String, hiveTable: String,
@@ -117,11 +127,7 @@ object HiveUtil extends Loggable {
 
     logger.info("Creating MySQL table...")
 
-    val rs = runQuery(conn.hive, s"USE ${hiveDatabase}; DESC ${hiveTable}")._1
-    val columns = fetchResult(rs) map { row =>
-      Column(row(0), row(1), row(2))
-    }
-
+    val columns = getColumns(conn.hive, hiveDatabase, hiveTable)
     if (columns.isEmpty) {
       throw new Exception("Hive table does not exist.")
     }
@@ -144,6 +150,13 @@ object HiveUtil extends Loggable {
 
     MysqlUtil.runUpdate(conn.mysql, createSql.toString)
 
+  }
+
+  private def getColumns(conn: Connection, database: String, table: String): List[Column] = {
+    val rs = runQuery(conn, s"USE ${database}; DESC ${table}")._1
+    fetchResult(rs) map { row =>
+      Column(row(0), row(1), row(2))
+    }
   }
 
   private def exportMysqlToHive(mysqlDatabase: String, mysqlTable: String,
