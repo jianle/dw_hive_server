@@ -126,8 +126,7 @@ object HiveUtil extends Loggable {
     // load into mysql
     MysqlUtil.runUpdate(conn.mysql, s"LOAD DATA INFILE '${mysqlDataFile}' INTO TABLE ${mysqlDatabase}.${mysqlTable} (${mysqlColumns})", isInterrupted)
 
-    // touch output file
-    new FileOutputStream(outputFile).close
+    touchOutputFiles()
   }
 
   private def ensureMysqlTable(hiveDatabase: String, hiveTable: String,
@@ -192,8 +191,12 @@ object HiveUtil extends Loggable {
     // load into hive
     CommandUtil.run(Seq("hive", "-e", s"LOAD DATA LOCAL INPATH '$hiveDataFile' OVERWRITE INTO TABLE $hiveDatabase.$hiveTable"), isInterrupted)
 
-    // touch output file
+    touchOutputFiles()
+  }
+
+  private def touchOutputFiles()(implicit taskId: Long) = {
     new FileOutputStream(outputFile).close
+    new FileOutputStream(metaFile).close
   }
 
   private def ensureHiveTable(mysqlDatabase: String, mysqlTable: String,
