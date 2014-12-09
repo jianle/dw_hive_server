@@ -14,6 +14,7 @@ import java.io.{File, FileInputStream, InputStream, ByteArrayInputStream}
 import net.liftweb.http.StreamingResponse
 import net.liftweb.util.Props
 import code.util.HiveUtil
+import org.apache.commons.io.IOUtils
 
 object TaskRest extends RestHelper with Loggable {
 
@@ -119,6 +120,21 @@ object TaskRest extends RestHelper with Loggable {
           task.status(Task.STATUS_INTERRUPTED).save
         }
         ("status" -> "ok") ~ Nil
+      }
+    }
+
+    case "meta" :: taskId :: Nil JsonGet _ => {
+      try {
+        val task = Task.find(taskId.toLong) openOr null
+        if (task == null) {
+          throw new Exception("Task id not found.")
+        }
+        val in = new FileInputStream(HiveUtil.metaFile(task.id.get))
+        val meta = IOUtils.toString(in)
+        in.close
+        ("status" -> "ok") ~ ("meta" -> meta)
+      } catch {
+        case e: Exception => ("status" -> "error") ~ ("msg" -> e.getMessage)
       }
     }
 
