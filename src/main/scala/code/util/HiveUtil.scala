@@ -265,10 +265,10 @@ object HiveUtil extends Loggable {
         }
 
         // meta
-        val metaColumns = columns.map({ column =>
+        val metaColumns = columns map { column =>
           ("name" -> column.name) ~ ("dataType" -> column.dataType)
-        })
-        val metaContent = pretty(render(("columns" -> metaColumns) ~ ("rows" -> numRows.longValue)))
+        }
+        val metaContent = compact(render(("columns" -> metaColumns) ~ ("rows" -> numRows.longValue)))
         meta.write(metaContent)
 
       }
