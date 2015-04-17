@@ -4,7 +4,7 @@ version := "0.0.1"
 
 organization := "com.anjuke.dw"
 
-scalaVersion := "2.10.0"
+scalaVersion := "2.10.4"
 
 resolvers ++= Seq("snapshots"     at "http://oss.sonatype.org/content/repositories/snapshots",
                   "staging"       at "http://oss.sonatype.org/content/repositories/staging",
