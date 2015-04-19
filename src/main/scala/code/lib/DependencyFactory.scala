@@ -1,5 +1,4 @@
-package code
-package lib
+package code.lib
 
 import akka.actor.ActorSystem
 import akka.actor.{Props => akkaProps}
@@ -9,7 +8,7 @@ import net.liftweb.http.LiftRulesMocker.toLiftRules
 import net.liftweb.util.Vendor.valToVender
 import net.liftweb.util.Helpers
 import net.liftweb.util.{Props => liftProps}
-import akka.routing.SmallestMailboxRouter
+import akka.routing.RoundRobinRouter
 import com.typesafe.config.{ConfigFactory, Config}
 
 object DependencyFactory extends Factory {
@@ -28,7 +27,9 @@ object DependencyFactory extends Factory {
   implicit object time extends FactoryMaker(Helpers.now)
 
   private def makeTaskActor = {
-    val props = akkaProps[TaskActor].withRouter(SmallestMailboxRouter(10))
+    val props = akkaProps[TaskActor]
+        .withRouter(RoundRobinRouter(10))
+        .withDispatcher("task-dispatcher")
     actorSystem.actorOf(props, "taskActor")
   }
 
