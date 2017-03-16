@@ -34,8 +34,8 @@ libraryDependencies ++= {
     "com.typesafe.akka" %% "akka-actor" % "2.1.2",
     "com.typesafe.akka" %% "akka-remote" % "2.1.2",
     "net.databinder.dispatch" %% "dispatch-core" % "0.11.1",
-    "org.apache.hadoop" % "hadoop-client" % "2.0.0-mr1-cdh4.5.0",
-    "org.apache.hive" % "hive-jdbc" % "0.10.0-cdh4.5.0"
+    "org.apache.hadoop" % "hadoop-client" % "2.6.0-mr1-cdh5.4.4" exclude ("com.google.protobuf", "protobuf-java"),
+    "org.apache.hive" % "hive-jdbc" % "1.1.0-cdh5.4.4" exclude ("com.google.protobuf", "protobuf-java")
   )
 }
 
