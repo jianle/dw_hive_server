@@ -31,11 +31,15 @@ libraryDependencies ++= {
     "ch.qos.logback"    % "logback-classic"     % "1.0.6",
     "org.specs2"        %% "specs2"             % "1.14"             % "test",
     "mysql" % "mysql-connector-java" % "5.1.26",
-    "com.typesafe.akka" %% "akka-actor" % "2.1.2",
-    "com.typesafe.akka" %% "akka-remote" % "2.1.2",
+    "com.typesafe.akka" %% "akka-actor" % "2.3.16",
+    "com.typesafe.akka" %% "akka-remote" % "2.3.16",
     "net.databinder.dispatch" %% "dispatch-core" % "0.11.1",
-    "org.apache.hadoop" % "hadoop-client" % "2.6.0-mr1-cdh5.4.4" exclude ("com.google.protobuf", "protobuf-java"),
-    "org.apache.hive" % "hive-jdbc" % "1.1.0-cdh5.4.4" exclude ("com.google.protobuf", "protobuf-java")
+    "org.apache.hadoop" % "hadoop-client" % "2.6.0-mr1-cdh5.4.4" excludeAll(
+      ExclusionRule(organization = "org.jboss.netty")
+    ),
+    "org.apache.hive" % "hive-jdbc" % "1.1.0-cdh5.4.4" excludeAll(
+      ExclusionRule(organization = "org.jboss.netty")
+    )
   )
 }
 

@@ -8,7 +8,7 @@ import net.liftweb.http.LiftRulesMocker.toLiftRules
 import net.liftweb.util.Vendor.valToVender
 import net.liftweb.util.Helpers
 import net.liftweb.util.{Props => liftProps}
-import akka.routing.RoundRobinRouter
+import akka.routing.BalancingPool
 import com.typesafe.config.{ConfigFactory, Config}
 
 object DependencyFactory extends Factory {
@@ -16,8 +16,8 @@ object DependencyFactory extends Factory {
   private val actorSystem = {
 
     val config = ConfigFactory.parseString(Seq(
-      "akka.remote.netty.hostname = \"%s\"" format liftProps.get("akka.remote.netty.hostname", ""),
-      "akka.remote.netty.port = %d" format liftProps.getInt("akka.remote.netty.port", 2552)
+      "akka.remote.netty.tcp.hostname = \"%s\"" format liftProps.get("akka.remote.netty.hostname", ""),
+      "akka.remote.netty.tcp.port = %d" format liftProps.getInt("akka.remote.netty.port", 2552)
     ) mkString "\n").withFallback(ConfigFactory.load)
 
     ActorSystem("hiveServer", config)
@@ -28,7 +28,7 @@ object DependencyFactory extends Factory {
 
   private def makeTaskActor = {
     val props = akkaProps[TaskActor]
-        .withRouter(RoundRobinRouter(10))
+        .withRouter(BalancingPool(10))
         .withDispatcher("task-dispatcher")
     actorSystem.actorOf(props, "taskActor")
   }
